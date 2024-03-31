@@ -11,34 +11,12 @@ fileversion: 1
 # If a new version is available, a message will be sent to the console and to players with the permission "ptero.reload".
 checkUpdate: true
 
-# Language
-# Supported languages: en, ja, fr, ro
-# You can add your own language file in the plugins/BungeePteroPower directory.
-language: en
-
-# When no one enters the server after starting the server,
-# the server will be stopped after this time has elapsed according to the timeout setting.
-startTimeout: 120
-
-# Power Controller Type
-# Supported types: pterodactyl
-# You can add your own power controller using API.
-powerControllerType: pterodactyl
-
 # This is used to check the server status to transfer players after the server starts
 startupJoin:
-  # The number of seconds the plugin will try to connect the player to the desired server
-  # Set this to the maximum time the server can take to start
-  # If you set it to 0, the plugin will not try to connect the player to the server
-  timeout: 60
-
   # Once the server is pingable, wait the specified amount of seconds before sending the player to the server
   # This is useful to wait for plugins like Luckperms to fully load
   # If you set it to 0, the player will be connected as soon as the server is pingable
   joinDelay: 5
-
-  # The number of seconds between pings to check the server status
-  pingInterval: 3
 
 # Pterodactyl configuration
 pterodactyl:
@@ -50,17 +28,20 @@ pterodactyl:
   apiKey: "ptlc_000000000000000000000000000000000000000000"
 
 # Per server configuration
+# Make sure that the server names match the registered servers in the velocity.toml
 servers:
-  pvp:
+  #server name
+  example:
+
     # Pterodactyl server ID
     # You can find the Pterodactyl server ID in the URL of the server page.
     # For example, if the URL is https://panel.example.com/server/1234abcd, the server ID is 1234abcd.
+
     id: 1234abcd
+
     # The time in seconds to stop the server after the last player leaves.
     # If you don't want to stop the server automatically, set it to -1.
     # If you set it to 0, the server will be stopped immediately after the last player leaves.
-    timeout: 30
 
-  hub:
-    id: abcd1234
-    timeout: -1
+    timeout: 30
+    startupJoinDelay: 30

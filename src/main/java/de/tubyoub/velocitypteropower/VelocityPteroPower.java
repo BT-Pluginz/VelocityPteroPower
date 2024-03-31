@@ -1,5 +1,30 @@
+/*
+ * This file is part of VelocityPteroPower, licensed under the MIT License.
+ *
+ *  Copyright (c) TubYoub <github@tubyoub.de>
+ *
+ *  Permission is hereby granted, free of charge, to any person obtaining a copy
+ *  of this software and associated documentation files (the "Software"), to deal
+ *  in the Software without restriction, including without limitation the rights
+ *  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ *  copies of the Software, and to permit persons to whom the Software is
+ *  furnished to do so, subject to the following conditions:
+ *
+ *  The above copyright notice and this permission notice shall be included in all
+ *  copies or substantial portions of the Software.
+ *
+ *  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ *  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ *  SOFTWARE.
+ */
+
 package de.tubyoub.velocitypteropower;
 
+import com.google.inject.Inject;
 import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
@@ -9,284 +34,265 @@ import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
-import dev.dejvokep.boostedyaml.YamlDocument;
-import dev.dejvokep.boostedyaml.block.implementation.Section;
-import dev.dejvokep.boostedyaml.dvs.versioning.BasicVersioning;
-import dev.dejvokep.boostedyaml.route.Route;
-import dev.dejvokep.boostedyaml.settings.dumper.DumperSettings;
-import dev.dejvokep.boostedyaml.settings.general.GeneralSettings;
-import dev.dejvokep.boostedyaml.settings.loader.LoaderSettings;
-import dev.dejvokep.boostedyaml.settings.updater.UpdaterSettings;
-import org.yaml.snakeyaml.Yaml;
+import de.tubyoub.velocitypteropower.api.PterodactylAPIClient;
+import de.tubyoub.velocitypteropower.libs.Metrics;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextColor;
+import net.kyori.adventure.text.logger.slf4j.ComponentLogger;
+import net.kyori.adventure.text.minimessage.MiniMessage;
 
-import com.google.inject.Inject;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
-import org.slf4j.Logger;
-
-@Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "1.0", authors = {"TubYoub"})
+/**
+ * Main class for the VelocityPteroPower plugin.
+ * This class handles the initialization of the plugin and the registration of commands and events.
+ */
+@Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9", authors = {"TubYoub"})
 public class VelocityPteroPower {
+    private final String version = "0.9";
+    private final int pluginId = 21465;
     private final ProxyServer proxyServer;
-    private final Logger logger;
-    private Path dataDirectory;
-    private YamlDocument config;
-    private String pterodactylUrl;
-    private String pterodactylApiKey;
-    private boolean checkUpdate;
-    private int startTimeout;
-    private int startupJoinTimeout;
-    private int startupJoinDelay;
-    private int startupJoinPingInterval;
+    private final ComponentLogger logger;
+    private final Path dataDirectory;
     private Map<String, PteroServerInfo> serverInfoMap;
     private final CommandManager commandManager;
+    private final ConfigurationManager configurationManager;
+    private PterodactylAPIClient pterodactylAPIClient;
+    private final Metrics.Factory metricsFactory;
+    private final Set<String> startingServers = ConcurrentHashMap.newKeySet();
 
+    /**
+     * Constructor for the VelocityPteroPower class.
+     *
+     * @param proxy The ProxyServer instance. This is the main server instance for the Velocity proxy.
+     * @param dataDirectory The path to the data directory. This is where the plugin can store and retrieve data.
+     * @param commandManager The CommandManager instance. This is used to register and manage commands for the plugin.
+     * @param logger The ComponentLogger instance. This is used for logging messages to the console.
+     * @param metricsFactory The Metrics.Factory instance. This is used for creating metrics for the plugin.
+     */
     @Inject
-    public VelocityPteroPower(ProxyServer proxy, @DataDirectory Path dataDirectory,CommandManager commandManager,Logger logger) {
+    public VelocityPteroPower(ProxyServer proxy, @DataDirectory Path dataDirectory,CommandManager commandManager,ComponentLogger logger, Metrics.Factory metricsFactory) {
         this.proxyServer = proxy;
         this.logger = logger;
         this.dataDirectory = dataDirectory;
-        this.serverInfoMap = new HashMap<>();
         this.commandManager = commandManager;
+        this.configurationManager = new ConfigurationManager(this);
+
+        this.metricsFactory = metricsFactory;
     }
 
+     /**
+     * This method is called when the proxy server is initialized.
+     * It logs the startup message, loads the configuration, initializes the Pterodactyl API client,
+     * registers the commands and events, and checks for updates if enabled in the configuration.
+     *
+     * @param event the proxy initialize event
+     */
     @Subscribe
     public void onProxyInitialize(ProxyInitializeEvent event) {
-        commandManager.register("ptero", new PteroCommand(proxyServer, this));
-        loadConfiguration();
+        logger.info(MiniMessage.miniMessage().deserialize("<#4287f5>____   ________________________"));
+        logger.info(MiniMessage.miniMessage().deserialize("<#4287f5>\\   \\ /   /\\______   \\______   \\"));
+        logger.info(MiniMessage.miniMessage().deserialize("<#4287f5> \\   Y   /  |     ___/|     ___/"));
+        logger.info(MiniMessage.miniMessage().deserialize("<#4287f5>  \\     /   |    |    |    |"+ "<#00ff77>         VelocityPteroPower <#6b6c6e>v" + version));
+        logger.info(MiniMessage.miniMessage().deserialize("<#4287f5>   \\___/    |____|tero|____|ower" + "<#A9A9A9>     Running with Blackmagic on Velocity"));
+        configurationManager.loadConfig();
+        this.pterodactylAPIClient = new PterodactylAPIClient(this);
+        commandManager.register("ptero", new PteroCommand(this));
+        proxyServer.getEventManager().register(this,new ServerSwitchListener(this));
+
+        this.serverInfoMap = configurationManager.getServerInfoMap();
+        Metrics metrics = metricsFactory.make(this, pluginId);
         logger.info("VelocityPteroPower succesfully loaded");
+        if (configurationManager.isCheckUpdate()){
+            if (VersionChecker.isNewVersionAvailable(version)){
+                logger.warn("There is a new Version of VelocityPteroPower");
+            }
+        }
     }
 
+    /**
+     * This method schedules a server shutdown if the server is empty.
+     *
+     * @param serverName the name of the server
+     * @param serverID the ID of the server
+     * @param timeout the timeout in seconds after which the server should be shut down if it is empty
+     */
+        public void scheduleServerShutdown(String serverName,String serverID, int timeout) {
+            if (timeout < 0) {
+                return;
+            }
+            logger.info("Scheduling server shutdown for " + serverName + " in " + timeout + " seconds.");
+            proxyServer.getScheduler().buildTask(this, () -> {
+                if (pterodactylAPIClient.isServerEmpty(serverName)) {
+                    pterodactylAPIClient.powerServer(serverID, "stop");
+                    logger.info("Shutting down server: " + serverName);
+                }else {
+                    logger.info("Shutdown cancelled for server: " + serverName + ". Players are present.");
+            }
+            }).delay(timeout, TimeUnit.SECONDS).schedule();
+        }
+     /**
+     * This method is called when a player tries to connect to a server.
+     * It checks if the server is online and starts it if it is not.
+     * If the server is already starting, it sends a message to the player and denies the connection.
+     * If the server is offline, it starts the server, sends a message to the player, denies the connection,
+     * and schedules a task to check if the server is online and connect the player.
+     *
+     * @param event the server pre-connect event
+     */
     @Subscribe
     public void onServerPreConnect(ServerPreConnectEvent event) {
         Player player = event.getPlayer();
         String serverName = event.getOriginalServer().getServerInfo().getName();
+        this.serverInfoMap = configurationManager.getServerInfoMap();
         PteroServerInfo serverInfo = serverInfoMap.get(serverName);
+
 
 
         if (!serverInfoMap.containsKey(serverName)) {
             logger.warn("Server '" + serverName + "' not found in configuration.");
+            player.sendMessage(
+                Component.text("[", NamedTextColor.WHITE)
+                .append(Component.text("VPP", TextColor.color(66,135,245)))
+                .append(Component.text("] Server not found in configuration: " + serverName, NamedTextColor.WHITE)));
             return;
         }
-
-
-        if (isServerOnline(serverInfo.getServerId())) {
-            logger.info("Server '" + serverName + "' is already online, canceling connection attempt.");
+        if (pterodactylAPIClient.isServerOnline(serverInfo.getServerId())) {
+            if (startingServers.contains(serverName)){
+                startingServers.remove(serverName);
+            }
             return;
         }
-        if(!isServerOnline(serverInfo.getServerId())){
-            powerServer(serverInfo.getServerId(), "start");
+        if (startingServers.contains(serverName)){
+            player.sendMessage(
+                Component.text("[", NamedTextColor.WHITE)
+                .append(Component.text("VPP", TextColor.color(66,135,245)))
+                .append(Component.text("] " +  serverName +" is already starting", NamedTextColor.WHITE)));
             event.setResult(ServerPreConnectEvent.ServerResult.denied());
+            return;
         }
 
+        startingServers.add(serverName);
+        pterodactylAPIClient.powerServer(serverInfo.getServerId(), "start");
+        player.sendMessage(
+                Component.text("[", NamedTextColor.WHITE)
+                .append(Component.text("VPP", TextColor.color(66,135,245)))
+                .append(Component.text("] Starting server: " + serverName, NamedTextColor.WHITE)));
+        event.setResult(ServerPreConnectEvent.ServerResult.denied());
 
         proxyServer.getScheduler().buildTask(this, () -> {
+            if (pterodactylAPIClient.isServerOnline(serverInfo.getServerId())) {
+                connectPlayer(player, serverName);
+            } else {
+                proxyServer.getScheduler().buildTask(this, () -> checkServerAndConnectPlayer(player, serverName)).schedule();
+            }
+        }).delay(5, TimeUnit.SECONDS).schedule();
+        }
+
+    private void checkServerAndConnectPlayer(Player player, String serverName) {
+        PteroServerInfo serverInfo = serverInfoMap.get(serverName);
+        if (pterodactylAPIClient.isServerOnline(serverInfo.getServerId())) {
             connectPlayer(player, serverName);
-        }).delay(startupJoinDelay+startupJoinTimeout, TimeUnit.SECONDS).schedule();
-    }
-
-        void loadConfiguration() {
-        try {
-            config = YamlDocument.create(new File(this.dataDirectory.toFile(), "config.yml"),
-                    Objects.requireNonNull(getClass().getResourceAsStream("/config.yml")),
-                    GeneralSettings.DEFAULT,
-                    LoaderSettings.builder().setAutoUpdate(true).build(),
-                    DumperSettings.DEFAULT,
-                    UpdaterSettings.builder().setVersioning(new BasicVersioning("fileversion"))
-                            .setOptionSorting(UpdaterSettings.OptionSorting.SORT_BY_DEFAULTS).build());
-
-
-            checkUpdate = (boolean) config.get("checkUpdate");
-            startTimeout = (int) config.get("startTimeout");
-
-            Section startupJoinSection = config.getSection("startupJoin");
-            Map<String, Object> startupJoin = new HashMap<>();
-            if (startupJoinSection != null) {
-                for (Object keyObj : startupJoinSection.getKeys()) {
-                    String key = (String) keyObj;
-                    Route route = Route.fromString(key);
-                    Object value = startupJoinSection.get(route);
-                    startupJoin.put(key, value);
-                }
-            }
-            startupJoinTimeout = (int) startupJoin.get("timeout");
-            startupJoinDelay = (int) startupJoin.get("joinDelay");
-            startupJoinPingInterval = (int) startupJoin.get("pingInterval");
-
-            Section pterodactylSection = config.getSection("pterodactyl");
-            Map<String, Object> pterodactyl = new HashMap<>();
-            if (pterodactylSection != null) {
-                for (Object keyObj : pterodactylSection.getKeys()) {
-                    String key = (String) keyObj;
-                    Route route = Route.fromString(key);
-                    Object value = pterodactylSection.get(route);
-                    pterodactyl.put(key, value);
-                }
-            }
-            pterodactylUrl = (String) pterodactyl.get("url");
-            if (!pterodactylUrl.endsWith("/")) {
-                pterodactylUrl += "/";
-            }
-            pterodactylApiKey = (String) pterodactyl.get("apiKey");
-
-
-            Section serversSection = config.getSection("servers");
-            if (serversSection != null) {
-                serverInfoMap = processServerSection(serversSection);
-            } else {
-                logger.error("Servers section not found in configuration.");
-            }
-        } catch (IOException e) {
-            logger.error("Error creating/loading configuration: " + e.getMessage());
+        } else {
+            proxyServer.getScheduler().buildTask(this, () -> checkServerAndConnectPlayer(player, serverName)).delay(configurationManager.getStartupJoinDelay(), TimeUnit.SECONDS).schedule();
         }
     }
 
-    private Map<String, PteroServerInfo> processServerSection(Section serversSection) {
-        Map<String, PteroServerInfo> serverInfoMap = new HashMap<>();
-        for (Object keyObj : serversSection.getKeys()) {
-            String key = (String) keyObj;
-            Route route = Route.fromString(key);
-            Object serverInfoDataObj = serversSection.get(route);
-            if (serverInfoDataObj instanceof Section) {
-                Section serverInfoDataSection = (Section) serverInfoDataObj;
-                Map<String, Object> serverInfoData = new HashMap<>();
-                for (Object dataKeyObj : serverInfoDataSection.getKeys()) {
-                    String dataKey = (String) dataKeyObj;
-                    Route dataRoute = Route.fromString(dataKey);
-                    Object value = serverInfoDataSection.get(dataRoute);
-                    serverInfoData.put(dataKey, value);
-                }
-                try {
-                    String id = (String) serverInfoData.get("id");
-                    int timeout = (int) serverInfoData.getOrDefault("timeout", -1);
-                    serverInfoMap.put(key, new PteroServerInfo(id, timeout, startupJoinDelay));
-                    logger.info("Registered Server: " + id + " successfully");
-                } catch (Exception e) {
-                    logger.warn("Error processing server '" + key + "': " + e.getMessage());
-                }
-            }
-        }
-        return serverInfoMap;
-    }
-    private Map<String, PteroServerInfo> processServerMap(Map<String, Object> serversMap) {
-        Map<String, PteroServerInfo> serverInfoMap = new HashMap<>();
-        for (Map.Entry<String, Object> entry : serversMap.entrySet()) {
-            String serverName = entry.getKey();
-            Map<String, Object> serverInfoData = (Map<String, Object>) entry.getValue();
-            if (!(serverInfoData instanceof Map)) {
-                throw new RuntimeException("Unexpected value type for key '" + serverName + "': " + serverInfoData.getClass().getName()); // Removed unnecessary variable
-            }
-            String id = (String) serverInfoData.get("id");
-            int timeout = (int) serverInfoData.getOrDefault("timeout", -1);
-            PteroServerInfo serverInfo = new PteroServerInfo(id, timeout, startupJoinDelay);
-            serverInfoMap.put(serverName, serverInfo);
-        }
-        return serverInfoMap;
-    }
-
-    private void loadServerInfo() {
-        if (config != null) {
-            Map<String, Object> servers = (Map<String, Object>) config.getMapList("servers");
-            if (servers != null) {
-                for (Map.Entry<String, Object> entry : servers.entrySet()) {
-                    String serverName = entry.getKey();
-                    Map<String, Object> serverInfo = (Map<String, Object>) entry.getValue();
-                    int timeout = (int) serverInfo.getOrDefault("timeout", -1);
-                    if (timeout != -1) {
-                        scheduleServerShutdown(serverName, timeout);
-                    }
-                }
-            }
-        }
-    }
-
-    private void scheduleServerShutdown(String serverName, int timeout) {
-        proxyServer.getScheduler().buildTask(this, () -> {
-            if (isServerEmpty(serverName)) {
-                powerServer(serverName, "stop");
-            }
-        }).delay(timeout, TimeUnit.SECONDS).schedule();
-    }
-
-    private Map<String, Object> readConfigFile() {
-        Path configFile = Path.of("plugins", "VelocityPteroPower", "config.yml");
-        try (InputStream inputStream = Files.newInputStream(configFile)) {
-            Yaml yaml = new Yaml();
-            return yaml.load(inputStream);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        return null;
-    }
-
-    private boolean isServerOnline(String serverId) {
-        try {
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(pterodactylUrl + "api/client/servers/" + serverId + "/resources"))
-                    .header("Accept", "application/json")
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() == 200) {
-
-                String responseBody = response.body();
-                return responseBody.contains("\"current_state\": \"running\"");
-            } else {
-                return false;
-            }
-        } catch (Exception e) {
-            e.printStackTrace();
-            return false;
-        }
-    }
-
-    public void powerServer(String serverId, String signal) {
-        try {
-            HttpClient client = HttpClient.newHttpClient();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(pterodactylUrl + "api/client/servers/" + serverId + "/power"))
-                    .header("Accept", "application/json")
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + pterodactylApiKey)
-                    .POST(HttpRequest.BodyPublishers.ofString("{\"signal\": \"" + signal + "\"}"))
-                    .build();
-
-            client.send(request, HttpResponse.BodyHandlers.ofString());
-        } catch (Exception e) {
-            logger.error("Error powering server.", e);
-        }
-    }
-
-    private boolean isServerEmpty(String serverId) {
-        Optional<RegisteredServer> server = proxyServer.getServer(serverId);
-        return server.map(value -> value.getPlayersConnected().isEmpty()).orElse(true);
-    }
-
+     /**
+     * This method connects a player to a server.
+     * It first retrieves the server by its name. If the server is not found, it throws a RuntimeException.
+     * If the player is not currently connected to any server and the target server is empty, it schedules a shutdown for the server.
+     * If the player is already connected to the target server, it does nothing.
+     * If the target server is online, it sends a connection request to the player and removes the server from the startingServers set.
+     *
+     * @param player the player to connect
+     * @param serverName the name of the server
+     */
     private void connectPlayer(Player player, String serverName) {
         RegisteredServer server = proxyServer.getServer(serverName).orElseThrow(() -> new RuntimeException("Server not found: " + serverName));
 
-        if (isServerOnline(serverInfoMap.get(serverName).getServerId())) {
+        if (!player.getCurrentServer().isPresent()) {
+            if (pterodactylAPIClient.isServerEmpty(serverName)){
+                this.scheduleServerShutdown(serverName, serverInfoMap.get(serverName).getServerId(),serverInfoMap.get(serverName).getTimeout());
+            }
+            return;
+        }
+        // Check if the player is already connected to the server
+        if (player.getCurrentServer().get().getServerInfo().getName().equals(serverName)) {
+            return;
+        }
+
+        if (pterodactylAPIClient.isServerOnline(serverInfoMap.get(serverName).getServerId())) {
             player.createConnectionRequest(server).fireAndForget();
-        } else {
-            //player.sendMessage(Component.text("Server is currently offline."));
+            startingServers.remove(serverName);
         }
     }
 
+    /**
+     * This method reloads the configuration for the VelocityPteroPower plugin.
+     * It calls the loadConfig method of the ConfigurationManager instance to reload the configuration.
+     * It then updates the serverInfoMap with the new configuration.
+     */
+    public void reloadConfig() {
+        configurationManager.loadConfig();
+        this.serverInfoMap = configurationManager.getServerInfoMap();
+    }
+    /**
+     * This method returns the map of server names to PteroServerInfo objects.
+     *
+     * @return the map of server names to PteroServerInfo objects
+     */
     public Map<String, PteroServerInfo> getServerInfoMap() {
         return serverInfoMap;
+    }
+
+    /**
+     * Returns the ProxyServer instance.
+     *
+     * @return the ProxyServer instance
+     */
+    public ProxyServer getProxyServer(){
+        return proxyServer;
+    }
+
+    /**
+     * Returns the ComponentLogger instance.
+     *
+     * @return the ComponentLogger instance
+     */
+    public ComponentLogger getLogger(){
+        return logger;
+    }
+
+    /**
+     * Returns the Path to the data directory.
+     *
+     * @return the Path to the data directory
+     */
+    public Path getDataDirectory(){
+        return dataDirectory;
+    }
+
+    /**
+     * Returns the PterodactylAPIClient instance.
+     *
+     * @return the PterodactylAPIClient instance
+     */
+    public PterodactylAPIClient getPterodactylAPIClient(){
+        return pterodactylAPIClient;
+    }
+
+    /**
+     * Returns the ConfigurationManager instance.
+     *
+     * @return the ConfigurationManager instance
+     */
+    public ConfigurationManager getConfigurationManager() {
+        return configurationManager;
     }
 }

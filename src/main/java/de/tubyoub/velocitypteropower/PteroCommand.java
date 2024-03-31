@@ -1,10 +1,38 @@
+/*
+ * This file is part of VelocityPteroPower, licensed under the MIT License.
+ *
+ *  Copyright (c) TubYoub <github@tubyoub.de>
+ *
+ *  Permission is hereby granted, free of charge, to any person obtaining a copy
+ *  of this software and associated documentation files (the "Software"), to deal
+ *  in the Software without restriction, including without limitation the rights
+ *  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ *  copies of the Software, and to permit persons to whom the Software is
+ *  furnished to do so, subject to the following conditions:
+ *
+ *  The above copyright notice and this permission notice shall be included in all
+ *  copies or substantial portions of the Software.
+ *
+ *  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ *  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ *  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ *  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ *  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ *  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ *  SOFTWARE.
+ */
+
 package de.tubyoub.velocitypteropower;
 
-import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.command.CommandSource;
+import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
+import de.tubyoub.velocitypteropower.api.PterodactylAPIClient;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextColor;
+import org.slf4j.Logger;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -12,15 +40,35 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * This class represents a command that can be executed by a player.
+ * It includes subcommands to start, stop, and reload servers.
+ */
 public class PteroCommand implements SimpleCommand {
     private final ProxyServer proxyServer;
     private final VelocityPteroPower plugin;
+    private final Logger logger;
+    private final PterodactylAPIClient pterodactylAPIClient;
+    private final ConfigurationManager configurationManager;
 
-    public PteroCommand(ProxyServer proxyServer, VelocityPteroPower plugin) {
-        this.proxyServer = proxyServer;
+    /**
+     * Constructor for the PteroCommand class.
+     * @param plugin the VelocityPteroPower plugin instance
+     */
+    public PteroCommand(VelocityPteroPower plugin) {
         this.plugin = plugin;
+        this.proxyServer = plugin.getProxyServer();
+        this.logger = plugin.getLogger();
+        this.pterodactylAPIClient = plugin.getPterodactylAPIClient();
+        this.configurationManager = plugin.getConfigurationManager();
     }
 
+    /**
+     * This method is called when the command is executed.
+     * It checks the subcommand and executes the corresponding action.
+     *
+     * @param invocation the command invocation
+     */
     @Override
     public void execute(Invocation invocation) {
         CommandSource sender = invocation.source();
@@ -29,7 +77,7 @@ public class PteroCommand implements SimpleCommand {
         Player player = (Player) sender;
 
         if (args.length == 0) {
-            player.sendMessage(Component.text("Usage: /ptero <start|stop|reload>"));
+            displayHelp(player);
             return;
         }
 
@@ -40,65 +88,87 @@ public class PteroCommand implements SimpleCommand {
                 if (player.hasPermission("ptero.start")) {
                     startServer(player, args);
                 } else {
-                    player.sendMessage(Component.text("You do not have permission to use this command."));
+                    player.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
                 }
                 break;
             case "stop":
                 if (player.hasPermission("ptero.stop")) {
                     stopServer(player, args);
                 } else {
-                    player.sendMessage(Component.text("You do not have permission to use this command."));
+                    player.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
                 }
                 break;
             case "reload":
                 if (player.hasPermission("ptero.reload")) {
                     reloadConfig(player);
                 } else {
-                    player.sendMessage(Component.text("You do not have permission to use this command."));
+                    player.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
                 }
                 break;
             default:
-                player.sendMessage(Component.text("Unknown subcommand: " + subCommand));
+                player.sendMessage(getSPPPrefix().append(Component.text("Unknown subcommand: " + subCommand)));
+                displayHelp(player);
         }
     }
 
+    /**
+     * This method is called to start a server.
+     *
+     * @param player the player who executed the command
+     * @param args the command arguments
+     */
     private void startServer(Player player, String[] args) {
         if (args.length < 2) {
-            player.sendMessage(Component.text("Usage: /ptero start <serverName>"));
+            player.sendMessage(getSPPPrefix().append(Component.text("Usage: /ptero start <serverName>", NamedTextColor.RED)));
             return;
         }
         String serverName = args[1];
         Map<String, PteroServerInfo> serverInfoMap = plugin.getServerInfoMap();
         if (serverInfoMap.containsKey(serverName)) {
             PteroServerInfo serverInfo = serverInfoMap.get(serverName);
-            plugin.powerServer(serverInfo.getServerId(), "start");
-            player.sendMessage(Component.text("Starting server: " + serverName));
+            pterodactylAPIClient.powerServer(serverInfo.getServerId(), "start");
+            player.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is starting")));
         } else {
-            player.sendMessage(Component.text("Server not found in configuration: " + serverName));
         }
     }
 
+    /**
+     * This method is called to stop a server.
+     *
+     * @param player the player who executed the command
+     * @param args the command arguments
+     */
     private void stopServer(Player player, String[] args) {
         if (args.length < 2) {
-            player.sendMessage(Component.text("Usage: /ptero stop <serverName>"));
+            player.sendMessage(getSPPPrefix().append(Component.text("Usage: /ptero stop <serverName>", TextColor.color(66,135,245))));
             return;
         }
         String serverName = args[1];
         Map<String, PteroServerInfo> serverInfoMap = plugin.getServerInfoMap();
         if (serverInfoMap.containsKey(serverName)) {
             PteroServerInfo serverInfo = serverInfoMap.get(serverName);
-            plugin.powerServer(serverInfo.getServerId(), "stop");
-            player.sendMessage(Component.text("Stopping server: " + serverName));
+            pterodactylAPIClient.powerServer(serverInfo.getServerId(), "stop");
+            player.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is stopping")));
         } else {
-            player.sendMessage(Component.text("Server not found in configuration: " + serverName));
         }
     }
 
+    /**
+     * This method is called to reload the configuration.
+     *
+     * @param player the player who executed the command
+     */
     private void reloadConfig(Player player) {
-        plugin.loadConfiguration();
-        player.sendMessage(Component.text("Configuration reloaded."));
+        plugin.reloadConfig();
+        player.sendMessage(getSPPPrefix().append(Component.text("Configuration reloaded.",TextColor.color(0,255,0))));
     }
 
+    /**
+     * This method is called to suggest command completions.
+     *
+     * @param invocation the command invocation
+     * @return a list of suggested completions
+     */
     @Override
     public List<String> suggest(Invocation invocation) {
         String[] currentArgs = invocation.arguments();
@@ -122,5 +192,19 @@ public class PteroCommand implements SimpleCommand {
             }
         }
         return null;
+    }
+
+    private void displayHelp(Player player) {
+        player.sendMessage(getSPPPrefix().append(Component.text("Available commands:", NamedTextColor.GREEN)));
+        player.sendMessage(getSPPPrefix().append(Component.text("/ptero start <serverName>", TextColor.color(66,135,245))));
+        player.sendMessage(getSPPPrefix().append(Component.text("/ptero stop <serverName>", TextColor.color(66,135,245))));
+        player.sendMessage(getSPPPrefix().append(Component.text("/ptero reload", TextColor.color(66,135,245))));
+        player.sendMessage(getSPPPrefix().append(Component.text("/ptero help", TextColor.color(66,135,245))));
+}
+
+    private Component getSPPPrefix() {
+        return Component.text("[", NamedTextColor.WHITE)
+            .append(Component.text("VPP", TextColor.color(66,135,245)))
+            .append(Component.text("] ", NamedTextColor.WHITE));
     }
 }
