@@ -58,7 +58,7 @@ import java.util.concurrent.TimeUnit;
  */
 @Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9", authors = {"TubYoub"})
 public class VelocityPteroPower {
-    private final String version = "0.9";
+    private final String version = "0.9.1";
     private final int pluginId = 21465;
     private final ProxyServer proxyServer;
     private final ComponentLogger logger;
