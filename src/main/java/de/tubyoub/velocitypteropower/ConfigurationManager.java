@@ -24,6 +24,7 @@
 
 package de.tubyoub.velocitypteropower;
 
+import de.tubyoub.velocitypteropower.api.PanelType;
 import dev.dejvokep.boostedyaml.YamlDocument;
 import dev.dejvokep.boostedyaml.block.implementation.Section;
 import dev.dejvokep.boostedyaml.dvs.versioning.BasicVersioning;
@@ -47,10 +48,11 @@ import java.util.Objects;
  */
 
 public class ConfigurationManager {
-        private Path dataDirectory;
+    private Path dataDirectory;
     private YamlDocument config;
-    private String pterodactylUrl;
-    private String pterodactylApiKey;
+    private String panelUrl;
+    private String apiKey;
+    private PanelType panel;
     private boolean checkUpdate;
     private int startupJoinDelay;
     private final VelocityPteroPower plugin;
@@ -108,11 +110,12 @@ public class ConfigurationManager {
                     pterodactyl.put(key, value);
                 }
             }
-            pterodactylUrl = (String) pterodactyl.get("url");
-            if (!pterodactylUrl.endsWith("/")) {
-                pterodactylUrl += "/";
+            panelUrl = (String) pterodactyl.get("url");
+            if (!panelUrl.endsWith("/")) {
+                panelUrl += "/";
             }
-            pterodactylApiKey = (String) pterodactyl.get("apiKey");
+            apiKey = (String) pterodactyl.get("apiKey");
+            panel = detectPanelType(apiKey);
 
 
             Section serversSection = config.getSection("servers");
@@ -163,6 +166,17 @@ public class ConfigurationManager {
             return serverInfoMap;
         }
 
+    private PanelType detectPanelType(String apiKey) {
+        if (apiKey.startsWith("ptlc_")) {
+            return PanelType.pterodactyl;
+        } else if (apiKey.startsWith("peli_")) {
+            return PanelType.pelican;
+        } else {
+            // Default to Pterodactyl if the prefix is not recognized
+            return PanelType.pterodactyl;
+        }
+    }
+
 
     /**
      * This method returns the map of server names to PteroServerInfo objects.
@@ -179,7 +193,7 @@ public class ConfigurationManager {
      * @return the Pterodactyl URL
      */
     public String getPterodactylUrl() {
-        return pterodactylUrl;
+        return panelUrl;
     }
 
     /**
@@ -188,7 +202,7 @@ public class ConfigurationManager {
      * @return the Pterodactyl API key
      */
     public String getPterodactylApiKey() {
-        return pterodactylApiKey;
+        return apiKey;
     }
 
     /**
@@ -209,4 +223,7 @@ public class ConfigurationManager {
         return startupJoinDelay;
     }
 
+    public PanelType getPanelType(){
+        return panel;
+    }
 }

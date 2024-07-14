@@ -28,6 +28,7 @@ import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
+import de.tubyoub.velocitypteropower.api.PanelAPIClient;
 import de.tubyoub.velocitypteropower.api.PterodactylAPIClient;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -48,7 +49,7 @@ public class PteroCommand implements SimpleCommand {
     private final ProxyServer proxyServer;
     private final VelocityPteroPower plugin;
     private final Logger logger;
-    private final PterodactylAPIClient pterodactylAPIClient;
+    private final PanelAPIClient apiClient;
     private final ConfigurationManager configurationManager;
 
     /**
@@ -59,7 +60,7 @@ public class PteroCommand implements SimpleCommand {
         this.plugin = plugin;
         this.proxyServer = plugin.getProxyServer();
         this.logger = plugin.getLogger();
-        this.pterodactylAPIClient = plugin.getPterodactylAPIClient();
+        this.apiClient = plugin.getAPIClient();
         this.configurationManager = plugin.getConfigurationManager();
     }
 
@@ -126,7 +127,7 @@ public class PteroCommand implements SimpleCommand {
         Map<String, PteroServerInfo> serverInfoMap = plugin.getServerInfoMap();
         if (serverInfoMap.containsKey(serverName)) {
             PteroServerInfo serverInfo = serverInfoMap.get(serverName);
-            pterodactylAPIClient.powerServer(serverInfo.getServerId(), "start");
+            apiClient.powerServer(serverInfo.getServerId(), "start");
             player.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is starting")));
         } else {
         }
@@ -147,7 +148,7 @@ public class PteroCommand implements SimpleCommand {
         Map<String, PteroServerInfo> serverInfoMap = plugin.getServerInfoMap();
         if (serverInfoMap.containsKey(serverName)) {
             PteroServerInfo serverInfo = serverInfoMap.get(serverName);
-            pterodactylAPIClient.powerServer(serverInfo.getServerId(), "stop");
+            apiClient.powerServer(serverInfo.getServerId(), "stop");
             player.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is stopping")));
         } else {
         }

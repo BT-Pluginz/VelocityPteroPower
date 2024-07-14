@@ -1,10 +1,10 @@
 ################################
-#                    VelocityPteroPower             #
-#                       by TubYoub                        #
+#      VelocityPteroPower      #
+#         by TubYoub           #
 ################################
 
 # Version of the configuration file
-fileversion: 1
+fileversion: 2
 
 # Check for updates
 # If true, the plugin will check for updates on startup.
@@ -23,7 +23,9 @@ pterodactyl:
   # The URL of your pterodactyl panel
   # If you use Cloudflare Tunnel, you need to allow the ip in the bypass setting.
   url: "https://panel.example.com"
-  # The client api key of your pterodactyl panel. It starts with "ptlc_".
+  # The client api key of your panel.
+  # The Plugin supports the Pterodactyl & Pelican System.
+  # Your API Key should either start with "ptlc_" or "peli_"
   # You can find the client api key in the "API Credentials" tab of the "Account" page.
   apiKey: "ptlc_000000000000000000000000000000000000000000"
 
@@ -33,8 +35,8 @@ servers:
   #server name
   example:
 
-    # Pterodactyl server ID
-    # You can find the Pterodactyl server ID in the URL of the server page.
+    # Panel server ID
+    # You can find the Panel server ID in the URL of the server page.
     # For example, if the URL is https://panel.example.com/server/1234abcd, the server ID is 1234abcd.
 
     id: 1234abcd

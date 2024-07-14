@@ -34,6 +34,9 @@ import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import de.tubyoub.velocitypteropower.api.PanelAPIClient;
+import de.tubyoub.velocitypteropower.api.PanelType;
+import de.tubyoub.velocitypteropower.api.PelicanAPIClient;
 import de.tubyoub.velocitypteropower.api.PterodactylAPIClient;
 import de.tubyoub.velocitypteropower.libs.Metrics;
 import net.kyori.adventure.text.Component;
@@ -43,6 +46,7 @@ import net.kyori.adventure.text.logger.slf4j.ComponentLogger;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -63,6 +67,8 @@ public class VelocityPteroPower {
     private final CommandManager commandManager;
     private final ConfigurationManager configurationManager;
     private PterodactylAPIClient pterodactylAPIClient;
+    private PelicanAPIClient pelicanAPIClient;
+    private PanelAPIClient apiClient;
     private final Metrics.Factory metricsFactory;
     private final Set<String> startingServers = ConcurrentHashMap.newKeySet();
 
@@ -101,7 +107,14 @@ public class VelocityPteroPower {
         logger.info(MiniMessage.miniMessage().deserialize("<#4287f5>  \\     /   |    |    |    |"+ "<#00ff77>         VelocityPteroPower <#6b6c6e>v" + version));
         logger.info(MiniMessage.miniMessage().deserialize("<#4287f5>   \\___/    |____|tero|____|ower" + "<#A9A9A9>     Running with Blackmagic on Velocity"));
         configurationManager.loadConfig();
-        this.pterodactylAPIClient = new PterodactylAPIClient(this);
+        if (configurationManager.getPanelType() == PanelType.pelican) {
+            logger.info("detected the pelican panel");
+            this.apiClient = new PelicanAPIClient(this);
+        } else {
+            logger.info("detected the pterodactyl panel");
+            this.apiClient = new PterodactylAPIClient(this);
+        }
+
         commandManager.register("ptero", new PteroCommand(this));
         proxyServer.getEventManager().register(this,new ServerSwitchListener(this));
 
@@ -133,7 +146,7 @@ public class VelocityPteroPower {
                     logger.info("Shutting down server: " + serverName);
                 }else {
                     logger.info("Shutdown cancelled for server: " + serverName + ". Players are present.");
-            }
+                }
             }).delay(timeout, TimeUnit.SECONDS).schedule();
         }
      /**
@@ -283,8 +296,8 @@ public class VelocityPteroPower {
      *
      * @return the PterodactylAPIClient instance
      */
-    public PterodactylAPIClient getPterodactylAPIClient(){
-        return pterodactylAPIClient;
+    public PanelAPIClient getAPIClient() {
+        return apiClient;
     }
 
     /**
