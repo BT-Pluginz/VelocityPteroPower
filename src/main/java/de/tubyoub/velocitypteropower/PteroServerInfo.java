@@ -24,8 +24,6 @@
 
 package de.tubyoub.velocitypteropower;
 
-import java.util.List;
-
 /**
  * This class represents the server information for a Pterodactyl server.
  * It includes the server ID, timeout, and join delay.
@@ -34,7 +32,6 @@ public  class PteroServerInfo {
     private final String serverId;
     private final int timeout;
     private final int joinDelay;
-
 
     /**
      * Constructor for the PteroServerInfo class.

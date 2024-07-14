@@ -24,6 +24,8 @@
 
 package de.tubyoub.velocitypteropower.api;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
@@ -31,10 +33,13 @@ import de.tubyoub.velocitypteropower.ConfigurationManager;
 import de.tubyoub.velocitypteropower.VelocityPteroPower;
 import org.slf4j.Logger;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
@@ -43,7 +48,7 @@ import java.util.concurrent.TimeUnit;
  * It includes methods to power a server, check if a server is online, and check if a server is empty.
  */
 
-public class PterodactylAPIClient {
+public class PterodactylAPIClient implements PanelAPIClient{
     public final Logger logger;
     public final ConfigurationManager configurationManager;
     public final ProxyServer proxyServer;
@@ -54,6 +59,7 @@ public class PterodactylAPIClient {
      *
      * @param plugin the VelocityPteroPower plugin instance
      */
+
     public PterodactylAPIClient(VelocityPteroPower plugin){
         this.logger = plugin.getLogger();
         this.configurationManager = plugin.getConfigurationManager();
@@ -66,6 +72,7 @@ public class PterodactylAPIClient {
      * @param serverId the ID of the server
      * @param signal the power signal to send
      */
+    @Override
     public void powerServer(String serverId, String signal) {
         try {
             HttpClient client = HttpClient.newHttpClient();
@@ -90,6 +97,7 @@ public class PterodactylAPIClient {
      * @param serverId the ID of the server
      * @return true if the server is online, false otherwise
      */
+    @Override
     public boolean isServerOnline(String serverId) {
         try {
             HttpClient client = HttpClient.newHttpClient();
@@ -123,6 +131,7 @@ public class PterodactylAPIClient {
      * @param serverName the name of the server
      * @return true if the server is online, false otherwise
      */
+    @Override
     public boolean isServerEmpty(String serverName) {
         Optional<RegisteredServer> server = proxyServer.getServer(serverName);
         return server.map(value -> value.getPlayersConnected().isEmpty()).orElse(true);

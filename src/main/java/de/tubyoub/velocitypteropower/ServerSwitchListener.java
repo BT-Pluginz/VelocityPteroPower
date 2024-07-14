@@ -30,6 +30,7 @@ import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import de.tubyoub.velocitypteropower.api.PanelAPIClient;
 import de.tubyoub.velocitypteropower.api.PterodactylAPIClient;
 import org.slf4j.Logger;
 
@@ -47,7 +48,7 @@ public class ServerSwitchListener {
     private final Logger logger;
     private final VelocityPteroPower plugin;
     private final ProxyServer proxyServer;
-    private final PterodactylAPIClient pterodactylAPIClient;
+    private final PanelAPIClient apiClient;
     private final ConfigurationManager configurationManager;
     private final Set<String> startingServers = ConcurrentHashMap.newKeySet();
     private Map<String, PteroServerInfo> serverInfoMap;
@@ -61,7 +62,7 @@ public class ServerSwitchListener {
         this.plugin = plugin;
         this.logger = plugin.getLogger();
         this.proxyServer = plugin.getProxyServer();
-        this.pterodactylAPIClient = plugin.getPterodactylAPIClient();
+        this.apiClient = plugin.getAPIClient();
         this.configurationManager = plugin.getConfigurationManager();
         this.serverInfoMap = configurationManager.getServerInfoMap();
     }
@@ -78,7 +79,7 @@ public class ServerSwitchListener {
         if (serverConnection.isPresent()) {
             String serverName = serverConnection.get().getServerInfo().getName();
             PteroServerInfo serverInfo = plugin.getServerInfoMap().get(serverName);
-            if (serverInfo != null && pterodactylAPIClient.isServerEmpty(serverName)) {
+            if (serverInfo != null && apiClient.isServerEmpty(serverName)) {
                 plugin.scheduleServerShutdown(serverName, serverInfo.getServerId(), serverInfo.getTimeout());
             }
         }
@@ -96,7 +97,7 @@ public class ServerSwitchListener {
         if (previousServerConnection.isPresent()) {
             String serverName = previousServerConnection.get().getServerInfo().getName();
             PteroServerInfo serverInfo = plugin.getServerInfoMap().get(serverName);
-            if (serverInfo != null && pterodactylAPIClient.isServerEmpty(serverInfo.getServerId())) {
+            if (serverInfo != null && apiClient.isServerEmpty(serverInfo.getServerId())) {
                 plugin.scheduleServerShutdown(serverName, serverInfo.getServerId(), serverInfo.getTimeout());
             }
         }
