@@ -75,10 +75,9 @@ public class PteroCommand implements SimpleCommand {
         CommandSource sender = invocation.source();
         String[] args = invocation.arguments();
 
-        Player player = (Player) sender;
 
         if (args.length == 0) {
-            displayHelp(player);
+            displayHelp(sender);
             return;
         }
 
@@ -86,41 +85,41 @@ public class PteroCommand implements SimpleCommand {
 
         switch (subCommand) {
             case "start":
-                if (player.hasPermission("ptero.start")) {
-                    startServer(player, args);
+                if (sender.hasPermission("ptero.start")) {
+                    startServer(invocation.source(), args);
                 } else {
-                    player.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
+                    sender.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
                 }
                 break;
             case "stop":
-                if (player.hasPermission("ptero.stop")) {
-                    stopServer(player, args);
+                if (sender.hasPermission("ptero.stop")) {
+                    stopServer(sender, args);
                 } else {
-                    player.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
+                    sender.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
                 }
                 break;
             case "reload":
-                if (player.hasPermission("ptero.reload")) {
-                    reloadConfig(player);
+                if (sender.hasPermission("ptero.reload")) {
+                    reloadConfig(sender);
                 } else {
-                    player.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
+                    sender.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
                 }
                 break;
             default:
-                player.sendMessage(getSPPPrefix().append(Component.text("Unknown subcommand: " + subCommand)));
-                displayHelp(player);
+                sender.sendMessage(getSPPPrefix().append(Component.text("Unknown subcommand: " + subCommand)));
+                displayHelp(sender);
         }
     }
 
     /**
      * This method is called to start a server.
      *
-     * @param player the player who executed the command
+     * @param sender the player who executed the command
      * @param args the command arguments
      */
-    private void startServer(Player player, String[] args) {
+    private void startServer(CommandSource sender, String[] args) {
         if (args.length < 2) {
-            player.sendMessage(getSPPPrefix().append(Component.text("Usage: /ptero start <serverName>", NamedTextColor.RED)));
+            sender.sendMessage(getSPPPrefix().append(Component.text("Usage: /ptero start <serverName>", NamedTextColor.RED)));
             return;
         }
         String serverName = args[1];
@@ -128,7 +127,7 @@ public class PteroCommand implements SimpleCommand {
         if (serverInfoMap.containsKey(serverName)) {
             PteroServerInfo serverInfo = serverInfoMap.get(serverName);
             apiClient.powerServer(serverInfo.getServerId(), "start");
-            player.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is starting")));
+            sender.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is starting")));
         } else {
         }
     }
@@ -136,12 +135,12 @@ public class PteroCommand implements SimpleCommand {
     /**
      * This method is called to stop a server.
      *
-     * @param player the player who executed the command
+     * @param sender the player who executed the command
      * @param args the command arguments
      */
-    private void stopServer(Player player, String[] args) {
+    private void stopServer(CommandSource sender, String[] args) {
         if (args.length < 2) {
-            player.sendMessage(getSPPPrefix().append(Component.text("Usage: /ptero stop <serverName>", TextColor.color(66,135,245))));
+            sender.sendMessage(getSPPPrefix().append(Component.text("Usage: /ptero stop <serverName>", TextColor.color(66,135,245))));
             return;
         }
         String serverName = args[1];
@@ -149,7 +148,7 @@ public class PteroCommand implements SimpleCommand {
         if (serverInfoMap.containsKey(serverName)) {
             PteroServerInfo serverInfo = serverInfoMap.get(serverName);
             apiClient.powerServer(serverInfo.getServerId(), "stop");
-            player.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is stopping")));
+            sender.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is stopping")));
         } else {
         }
     }
@@ -157,11 +156,11 @@ public class PteroCommand implements SimpleCommand {
     /**
      * This method is called to reload the configuration.
      *
-     * @param player the player who executed the command
+     * @param sender the player who executed the command
      */
-    private void reloadConfig(Player player) {
+    private void reloadConfig(CommandSource sender) {
         plugin.reloadConfig();
-        player.sendMessage(getSPPPrefix().append(Component.text("Configuration reloaded.",TextColor.color(0,255,0))));
+        sender.sendMessage(getSPPPrefix().append(Component.text("Configuration reloaded.",TextColor.color(0,255,0))));
     }
 
     /**
@@ -195,12 +194,12 @@ public class PteroCommand implements SimpleCommand {
         return null;
     }
 
-    private void displayHelp(Player player) {
-        player.sendMessage(getSPPPrefix().append(Component.text("Available commands:", NamedTextColor.GREEN)));
-        player.sendMessage(getSPPPrefix().append(Component.text("/ptero start <serverName>", TextColor.color(66,135,245))));
-        player.sendMessage(getSPPPrefix().append(Component.text("/ptero stop <serverName>", TextColor.color(66,135,245))));
-        player.sendMessage(getSPPPrefix().append(Component.text("/ptero reload", TextColor.color(66,135,245))));
-        player.sendMessage(getSPPPrefix().append(Component.text("/ptero help", TextColor.color(66,135,245))));
+    private void displayHelp(CommandSource sender) {
+        sender.sendMessage(getSPPPrefix().append(Component.text("Available commands:", NamedTextColor.GREEN)));
+        sender.sendMessage(getSPPPrefix().append(Component.text("/ptero start <serverName>", TextColor.color(66,135,245))));
+        sender.sendMessage(getSPPPrefix().append(Component.text("/ptero stop <serverName>", TextColor.color(66,135,245))));
+        sender.sendMessage(getSPPPrefix().append(Component.text("/ptero reload", TextColor.color(66,135,245))));
+        sender.sendMessage(getSPPPrefix().append(Component.text("/ptero help", TextColor.color(66,135,245))));
 }
 
     private Component getSPPPrefix() {
