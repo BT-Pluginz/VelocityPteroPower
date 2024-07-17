@@ -58,7 +58,7 @@ import java.util.concurrent.TimeUnit;
  */
 @Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9", authors = {"TubYoub"})
 public class VelocityPteroPower {
-    private final String version = "0.9";
+    private final String version = "0.9.2";
     private final int pluginId = 21465;
     private final ProxyServer proxyServer;
     private final ComponentLogger logger;
@@ -66,8 +66,6 @@ public class VelocityPteroPower {
     private Map<String, PteroServerInfo> serverInfoMap;
     private final CommandManager commandManager;
     private final ConfigurationManager configurationManager;
-    private PterodactylAPIClient pterodactylAPIClient;
-    private PelicanAPIClient pelicanAPIClient;
     private PanelAPIClient apiClient;
     private final Metrics.Factory metricsFactory;
     private final Set<String> startingServers = ConcurrentHashMap.newKeySet();
@@ -141,8 +139,8 @@ public class VelocityPteroPower {
             }
             logger.info("Scheduling server shutdown for " + serverName + " in " + timeout + " seconds.");
             proxyServer.getScheduler().buildTask(this, () -> {
-                if (pterodactylAPIClient.isServerEmpty(serverName)) {
-                    pterodactylAPIClient.powerServer(serverID, "stop");
+                if (apiClient.isServerEmpty(serverName)) {
+                    apiClient.powerServer(serverID, "stop");
                     logger.info("Shutting down server: " + serverName);
                 }else {
                     logger.info("Shutdown cancelled for server: " + serverName + ". Players are present.");
@@ -175,7 +173,7 @@ public class VelocityPteroPower {
                 .append(Component.text("] Server not found in configuration: " + serverName, NamedTextColor.WHITE)));
             return;
         }
-        if (pterodactylAPIClient.isServerOnline(serverInfo.getServerId())) {
+        if (apiClient.isServerOnline(serverInfo.getServerId())) {
             if (startingServers.contains(serverName)){
                 startingServers.remove(serverName);
             }
@@ -191,7 +189,7 @@ public class VelocityPteroPower {
         }
 
         startingServers.add(serverName);
-        pterodactylAPIClient.powerServer(serverInfo.getServerId(), "start");
+        apiClient.powerServer(serverInfo.getServerId(), "start");
         player.sendMessage(
                 Component.text("[", NamedTextColor.WHITE)
                 .append(Component.text("VPP", TextColor.color(66,135,245)))
@@ -199,7 +197,7 @@ public class VelocityPteroPower {
         event.setResult(ServerPreConnectEvent.ServerResult.denied());
 
         proxyServer.getScheduler().buildTask(this, () -> {
-            if (pterodactylAPIClient.isServerOnline(serverInfo.getServerId())) {
+            if (apiClient.isServerOnline(serverInfo.getServerId())) {
                 connectPlayer(player, serverName);
             } else {
                 proxyServer.getScheduler().buildTask(this, () -> checkServerAndConnectPlayer(player, serverName)).schedule();
@@ -209,7 +207,7 @@ public class VelocityPteroPower {
 
     private void checkServerAndConnectPlayer(Player player, String serverName) {
         PteroServerInfo serverInfo = serverInfoMap.get(serverName);
-        if (pterodactylAPIClient.isServerOnline(serverInfo.getServerId())) {
+        if (apiClient.isServerOnline(serverInfo.getServerId())) {
             connectPlayer(player, serverName);
         } else {
             proxyServer.getScheduler().buildTask(this, () -> checkServerAndConnectPlayer(player, serverName)).delay(configurationManager.getStartupJoinDelay(), TimeUnit.SECONDS).schedule();
@@ -230,7 +228,7 @@ public class VelocityPteroPower {
         RegisteredServer server = proxyServer.getServer(serverName).orElseThrow(() -> new RuntimeException("Server not found: " + serverName));
 
         if (!player.getCurrentServer().isPresent()) {
-            if (pterodactylAPIClient.isServerEmpty(serverName)){
+            if (apiClient.isServerEmpty(serverName)){
                 this.scheduleServerShutdown(serverName, serverInfoMap.get(serverName).getServerId(),serverInfoMap.get(serverName).getTimeout());
             }
             return;
@@ -240,7 +238,7 @@ public class VelocityPteroPower {
             return;
         }
 
-        if (pterodactylAPIClient.isServerOnline(serverInfoMap.get(serverName).getServerId())) {
+        if (apiClient.isServerOnline(serverInfoMap.get(serverName).getServerId())) {
             player.createConnectionRequest(server).fireAndForget();
             startingServers.remove(serverName);
         }
