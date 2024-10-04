@@ -32,6 +32,7 @@ import dev.dejvokep.boostedyaml.route.Route;
 import dev.dejvokep.boostedyaml.settings.dumper.DumperSettings;
 import dev.dejvokep.boostedyaml.settings.general.GeneralSettings;
 import dev.dejvokep.boostedyaml.settings.loader.LoaderSettings;
+import dev.dejvokep.boostedyaml.settings.updater.MergeRule;
 import dev.dejvokep.boostedyaml.settings.updater.UpdaterSettings;
 import org.slf4j.Logger;
 
@@ -55,6 +56,7 @@ public class ConfigurationManager {
     private PanelType panel;
     private boolean checkUpdate;
     private int startupJoinDelay;
+    private int apiThreads;
     private final VelocityPteroPower plugin;
     private final Logger logger;
     private Map<String, PteroServerInfo> serverInfoMap;
@@ -82,11 +84,16 @@ public class ConfigurationManager {
                     LoaderSettings.builder().setAutoUpdate(true).build(),
                     DumperSettings.DEFAULT,
                     UpdaterSettings.builder().setVersioning(new BasicVersioning("fileversion"))
-                            .setOptionSorting(UpdaterSettings.OptionSorting.SORT_BY_DEFAULTS).build());
+                            .setOptionSorting(UpdaterSettings.OptionSorting.SORT_BY_DEFAULTS)
+                            .setMergeRule(MergeRule.MAPPINGS, true)
+                            .setMergeRule(MergeRule.MAPPING_AT_SECTION, true)
+                            .setMergeRule(MergeRule.SECTION_AT_MAPPING, true)
+                            .setKeepAll(true)
+                            .build());
 
 
             checkUpdate = (boolean) config.get("checkUpdate");
-
+            apiThreads = (int) config.get("apiThreads", 10);
             Section startupJoinSection = config.getSection("startupJoin");
             Map<String, Object> startupJoin = new HashMap<>();
             if (startupJoinSection != null) {
@@ -225,5 +232,9 @@ public class ConfigurationManager {
 
     public PanelType getPanelType(){
         return panel;
+    }
+
+    public int getApiThreads() {
+        return apiThreads;
     }
 }

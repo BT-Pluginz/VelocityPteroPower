@@ -41,6 +41,8 @@ import java.net.http.HttpResponse;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -53,6 +55,10 @@ public class PterodactylAPIClient implements PanelAPIClient{
     public final ConfigurationManager configurationManager;
     public final ProxyServer proxyServer;
 
+    private final HttpClient httpClient;
+    private final ExecutorService executorService;
+
+
     /**
      * Constructor for the PterodactylAPIClient class.
      * It initializes the logger, configuration manager, and proxy server from the provided plugin instance.
@@ -64,6 +70,11 @@ public class PterodactylAPIClient implements PanelAPIClient{
         this.logger = plugin.getLogger();
         this.configurationManager = plugin.getConfigurationManager();
         this.proxyServer = plugin.getProxyServer();
+
+        this.executorService = Executors.newFixedThreadPool(configurationManager.getApiThreads());
+        this.httpClient = HttpClient.newBuilder()
+                .executor(executorService)
+                .build();
     }
 
     /**
@@ -75,16 +86,15 @@ public class PterodactylAPIClient implements PanelAPIClient{
     @Override
     public void powerServer(String serverId, String signal) {
         try {
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(configurationManager.getPterodactylUrl() + "api/client/servers/" + serverId + "/power"))
-                    .header("Accept", "application/json")
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + configurationManager.getPterodactylApiKey())
-                    .POST(HttpRequest.BodyPublishers.ofString("{\"signal\": \"" + signal + "\"}"))
-                    .build();
+                .uri(URI.create(configurationManager.getPterodactylUrl() + "api/client/servers/" + serverId + "/power"))
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + configurationManager.getPterodactylApiKey())
+                .POST(HttpRequest.BodyPublishers.ofString("{\"signal\": \"" + signal + "\"}"))
+                .build();
 
-            client.send(request, HttpResponse.BodyHandlers.ofString());
+            httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         } catch (Exception e) {
             logger.error("Error powering server.", e);
         }
@@ -100,21 +110,18 @@ public class PterodactylAPIClient implements PanelAPIClient{
     @Override
     public boolean isServerOnline(String serverId) {
         try {
-            HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(configurationManager.getPterodactylUrl() + "api/client/servers/" + serverId + "/resources"))
                     .header("Accept", "application/json")
-                     .header("Content-Type", "application/json")
+                    .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + configurationManager.getPterodactylApiKey())
                     .GET()
                     .build();
 
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             String responseBody = response.body();
-            if (response.statusCode() == 200)  {
-                if (responseBody.contains("{\"object\":\"stats\",\"attributes\":{\"current_state\":\"running\"")) {
-                    return true;
-                }
+            if (response.statusCode() == 200) {
+                return responseBody.contains("{\"object\":\"stats\",\"attributes\":{\"current_state\":\"running\"");
             } else {
                 return false;
             }
@@ -122,7 +129,6 @@ public class PterodactylAPIClient implements PanelAPIClient{
             e.printStackTrace();
             return false;
         }
-        return false;
     }
 
     /**
@@ -135,5 +141,9 @@ public class PterodactylAPIClient implements PanelAPIClient{
     public boolean isServerEmpty(String serverName) {
         Optional<RegisteredServer> server = proxyServer.getServer(serverName);
         return server.map(value -> value.getPlayersConnected().isEmpty()).orElse(true);
+    }
+
+    public void shutdown() {
+        executorService.shutdownNow();
     }
 }

@@ -4,12 +4,19 @@
 ################################
 
 # Version of the configuration file
-fileversion: 2
+fileversion: 3
 
 # Check for updates
 # If true, the plugin will check for updates on startup.
 # If a new version is available, a message will be sent to the console and to players with the permission "ptero.reload".
 checkUpdate: true
+
+# How many Threads should be used to check the server status
+# The more threads the more requests can be handled at the same time
+# more threads = more resources used
+# restart the server so changes take effect
+# default: 10
+apiThreads: 10
 
 # This is used to check the server status to transfer players after the server starts
 startupJoin:

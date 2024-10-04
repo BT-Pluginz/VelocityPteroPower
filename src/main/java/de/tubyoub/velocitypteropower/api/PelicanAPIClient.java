@@ -14,6 +14,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class PelicanAPIClient implements PanelAPIClient {
     public final Logger logger;
@@ -21,10 +24,18 @@ public class PelicanAPIClient implements PanelAPIClient {
     public final ProxyServer proxyServer;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    private final HttpClient httpClient;
+    private final ExecutorService executorService;
+
     public PelicanAPIClient(VelocityPteroPower plugin) {
         this.logger = plugin.getLogger();
         this.configurationManager = plugin.getConfigurationManager();
         this.proxyServer = plugin.getProxyServer();
+
+        this.executorService = Executors.newFixedThreadPool(10); // Limit to 10 threads
+        this.httpClient = HttpClient.newBuilder()
+                .executor(executorService)
+                .build();
     }
 
     @Override
@@ -71,5 +82,9 @@ public class PelicanAPIClient implements PanelAPIClient {
     public boolean isServerEmpty(String serverName) {
         Optional<RegisteredServer> server = proxyServer.getServer(serverName);
         return server.map(value -> value.getPlayersConnected().isEmpty()).orElse(true);
+    }
+
+    public void shutdown() {
+        executorService.shutdownNow();
     }
 }

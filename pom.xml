@@ -6,7 +6,7 @@
 
     <groupId>de.tubyoub</groupId>
     <artifactId>VelocityPteroPower</artifactId>
-    <version>0.9.2</version>
+    <version>0.9.2.1</version>
     <packaging>jar</packaging>
 
     <name>VelocityPteroPower</name>
@@ -18,7 +18,7 @@
 
     <profiles>
         <profile>
-            <id>beta</id>
+            <id>alpha</id>
             <build>
                 <resources>
                   <resource>

@@ -29,6 +29,7 @@ import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
+import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.Player;
@@ -56,9 +57,9 @@ import java.util.concurrent.TimeUnit;
  * Main class for the VelocityPteroPower plugin.
  * This class handles the initialization of the plugin and the registration of commands and events.
  */
-@Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9", authors = {"TubYoub"})
+@Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9.2.1", authors = {"TubYoub"}, description = "A plugin for Velocity that allows you to manage your Pterodactyl/Pelican servers from the Velocity console.", url = "https://github.com/TubYoub/VelocityPteroPower")
 public class VelocityPteroPower {
-    private final String version = "0.9.2";
+    private final String version = "0.9.2.1";
     private final int pluginId = 21465;
     private final ProxyServer proxyServer;
     private final ComponentLogger logger;
@@ -305,5 +306,9 @@ public class VelocityPteroPower {
      */
     public ConfigurationManager getConfigurationManager() {
         return configurationManager;
+    }
+    public void onProxyShutdown(ProxyShutdownEvent event) {
+        apiClient.shutdown();
+        logger.info("Shutting down VelocityPteroPower... Goodbye");
     }
 }
