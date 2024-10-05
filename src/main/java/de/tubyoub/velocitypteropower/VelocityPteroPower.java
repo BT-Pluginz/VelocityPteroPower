@@ -62,9 +62,9 @@ import java.util.concurrent.locks.ReentrantLock;
  * Main class for the VelocityPteroPower plugin.
  * This class handles the initialization of the plugin and the registration of commands and events.
  */
-@Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9.2.2", authors = {"TubYoub"}, description = "A plugin for Velocity that allows you to manage your Pterodactyl/Pelican servers from the Velocity console.", url = "https://github.com/TubYoub/VelocityPteroPower")
+@Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9.2.3", authors = {"TubYoub"}, description = "A plugin for Velocity that allows you to manage your Pterodactyl/Pelican servers from the Velocity console.", url = "https://github.com/TubYoub/VelocityPteroPower")
 public class VelocityPteroPower {
-    private final String version = "0.9.2.2";
+    private final String version = "0.9.2.3";
     private final String modrinthID = "";
     private final int pluginId = 21465;
     private final ProxyServer proxyServer;
@@ -79,7 +79,6 @@ public class VelocityPteroPower {
     private final AtomicInteger rateLimit = new AtomicInteger(60); // Default value, will be updated
     private final AtomicInteger remainingRequests = new AtomicInteger(60); // Default value, will be updated
     private final ReentrantLock rateLimitLock = new ReentrantLock();
-
 
     /**
      * Constructor for the VelocityPteroPower class.
@@ -181,7 +180,7 @@ public class VelocityPteroPower {
                 .append(Component.text("] Server not found in configuration: " + serverName, NamedTextColor.WHITE)));
             return;
         }
-        if (apiClient.isServerOnline(serverInfo.getServerId()) && this.canMakeRequest()) {
+        if (apiClient.isServerOnline(serverName) && this.canMakeRequest()) {
             if (startingServers.contains(serverName)){
                 startingServers.remove(serverName);
             }
@@ -205,17 +204,17 @@ public class VelocityPteroPower {
         event.setResult(ServerPreConnectEvent.ServerResult.denied());
 
         proxyServer.getScheduler().buildTask(this, () -> {
-            if (apiClient.isServerOnline(serverInfo.getServerId()) && this.canMakeRequest()) {
+            if (apiClient.isServerOnline(serverName) && this.canMakeRequest()) {
                 connectPlayer(player, serverName);
             } else {
                 proxyServer.getScheduler().buildTask(this, () -> checkServerAndConnectPlayer(player, serverName)).schedule();
             }
-        }).delay(5, TimeUnit.SECONDS).schedule();
+        }).delay(16, TimeUnit.SECONDS).schedule();
         }
 
     private void checkServerAndConnectPlayer(Player player, String serverName) {
         PteroServerInfo serverInfo = serverInfoMap.get(serverName);
-        if (apiClient.isServerOnline(serverInfo.getServerId()) && this.canMakeRequest()) {
+        if (apiClient.isServerOnline(serverName) && this.canMakeRequest()) {
             connectPlayer(player, serverName);
         } else {
             proxyServer.getScheduler().buildTask(this, () -> checkServerAndConnectPlayer(player, serverName)).delay(configurationManager.getStartupJoinDelay(), TimeUnit.SECONDS).schedule();
@@ -246,7 +245,7 @@ public class VelocityPteroPower {
             return;
         }
 
-        if (apiClient.isServerOnline(serverInfoMap.get(serverName).getServerId()) && this.canMakeRequest()) {
+        if (apiClient.isServerOnline(serverName) && this.canMakeRequest()) {
             player.createConnectionRequest(server).fireAndForget();
             startingServers.remove(serverName);
         }
@@ -279,8 +278,6 @@ public class VelocityPteroPower {
             }
         }
     }
-
-
 
     /**
      * This method reloads the configuration for the VelocityPteroPower plugin.

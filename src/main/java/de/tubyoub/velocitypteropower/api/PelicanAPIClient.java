@@ -1,10 +1,9 @@
 package de.tubyoub.velocitypteropower.api;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.proxy.server.ServerPing;
 import de.tubyoub.velocitypteropower.ConfigurationManager;
 import de.tubyoub.velocitypteropower.VelocityPteroPower;
 import org.slf4j.Logger;
@@ -15,6 +14,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -46,11 +46,11 @@ public class PelicanAPIClient implements PanelAPIClient {
         try {
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder().uri(URI.create(configurationManager.getPterodactylUrl() + "api/client/servers/" + serverId + "/power"))
-                .header("Accept", "application/json")
-                .header("Content-Type", "application/json")
-                .header("Authorization", "Bearer " + configurationManager.getPterodactylApiKey())
-                .POST(HttpRequest.BodyPublishers.ofString("{\"signal\": \"" + signal + "\"}"))
-                .build();
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + configurationManager.getPterodactylApiKey())
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"signal\": \"" + signal + "\"}"))
+                    .build();
 
             plugin.updateRateLimitInfo(httpClient.send(request, HttpResponse.BodyHandlers.ofString()));
         } catch (Exception e) {
@@ -59,56 +59,34 @@ public class PelicanAPIClient implements PanelAPIClient {
     }
 
     @Override
-    public boolean isServerOnline(String serverId) {
-        int retryCount = 3;
-        while (retryCount > 0) {
+    public boolean isServerOnline(String serverName) {
+        Optional<RegisteredServer> serverOptional = proxyServer.getServer(serverName);
+        if (serverOptional.isPresent()) {
+            RegisteredServer server = serverOptional.get();
             try {
-                HttpRequest request = HttpRequest.newBuilder()
-                        .uri(URI.create(configurationManager.getPterodactylUrl() + "api/client/servers/" + serverId + "/resources"))
-                        .header("Accept", "application/json")
-                        .header("Content-Type", "application/json")
-                        .header("Authorization", "Bearer " + configurationManager.getPterodactylApiKey())
-                        .GET()
-                        .build();
-
-                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-                plugin.updateRateLimitInfo(response);
-                String responseBody = response.body();
-                if (response.statusCode() == 200) {
-                    return responseBody.contains("{\"object\":\"stats\",\"attributes\":{\"current_state\":\"running\"");
-                } else {
-                    return false;
+                CompletableFuture<ServerPing> pingFuture = server.ping();
+                ServerPing pingResult = pingFuture.get(configurationManager.getPingTimeout(), TimeUnit.MILLISECONDS);
+                return pingResult != null;
+            } catch (Exception e) {
+                if (!(e.getCause() instanceof NullPointerException)) {
+                    logger.debug("Error pinging server {}: {}", serverName, e.getMessage());
                 }
-            } catch (IOException | InterruptedException e) {
-                if (e.getMessage().contains("GOAWAY")) {
-                    retryCount--;
-                    if (retryCount == 0) {
-                        logger.error("Failed to check server status after retries: " + e.getMessage());
-                        return false;
-                    }
-                    logger.warn("GOAWAY received, retrying... (" + retryCount + " retries left)");
-                    try {
-                        Thread.sleep(1000); // Wait before retrying
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        return false;
-                    }
-                } else {
-                    logger.error("Error checking server status: " + e.getMessage());
-                    return false;
-                }
+                return false;
             }
+        } else {
+            logger.error("Server not found: {} Check if the server name match in the configs", serverName);
+            return false;
         }
-        return false;
     }
 
-    @Override
-    public boolean isServerEmpty(String serverName) {
-        Optional<RegisteredServer> server = proxyServer.getServer(serverName);
-        return server.map(value -> value.getPlayersConnected().isEmpty()).orElse(true);
+        @Override
+        public boolean isServerEmpty (String serverName){
+            Optional<RegisteredServer> server = proxyServer.getServer(serverName);
+            return server.map(value -> value.getPlayersConnected().isEmpty()).orElse(true);
+        }
+
+        public void shutdown () {
+            executorService.shutdownNow();
+        }
     }
 
-    public void shutdown() {
-        executorService.shutdownNow();
-    }
-}

@@ -4,7 +4,7 @@
 ################################
 
 # Version of the configuration file
-fileversion: 4
+fileversion: 5
 
 # Check for updates
 # If true, the plugin will check for updates on startup.
@@ -21,6 +21,10 @@ apiThreads: 10
 # print updated Rate Limit from the API response to console
 # default: false
 printRateLimit: false
+
+# How long the ping to the server lasts, to check if its is online, until it times out (in milliseconds)
+# default: 1000
+pingTimeout: 1000
 
 # This is used to check the server status to transfer players after the server starts
 startupJoin:

@@ -58,6 +58,7 @@ public class ConfigurationManager {
     private boolean printRateLimit;
     private int startupJoinDelay;
     private int apiThreads;
+    private int pingTimeout;
     private final VelocityPteroPower plugin;
     private final Logger logger;
     private Map<String, PteroServerInfo> serverInfoMap;
@@ -95,6 +96,7 @@ public class ConfigurationManager {
 
             checkUpdate = (boolean) config.get("checkUpdate");
             printRateLimit = (boolean) config.get("printRateLimit");
+            pingTimeout = (int) config.get("pingTimeout");
             apiThreads = (int) config.get("apiThreads", 10);
             Section startupJoinSection = config.getSection("startupJoin");
             Map<String, Object> startupJoin = new HashMap<>();
@@ -242,5 +244,9 @@ public class ConfigurationManager {
 
     public boolean isPrintRateLimit() {
         return printRateLimit;
+    }
+
+    public int getPingTimeout() {
+        return pingTimeout;
     }
 }
