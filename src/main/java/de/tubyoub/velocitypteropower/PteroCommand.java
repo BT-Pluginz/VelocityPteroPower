@@ -126,7 +126,9 @@ public class PteroCommand implements SimpleCommand {
         Map<String, PteroServerInfo> serverInfoMap = plugin.getServerInfoMap();
         if (serverInfoMap.containsKey(serverName)) {
             PteroServerInfo serverInfo = serverInfoMap.get(serverName);
-            apiClient.powerServer(serverInfo.getServerId(), "start");
+            if (plugin.canMakeRequest()) {
+                apiClient.powerServer(serverInfo.getServerId(), "start");
+            }
             sender.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is starting")));
         } else {
         }
@@ -147,7 +149,9 @@ public class PteroCommand implements SimpleCommand {
         Map<String, PteroServerInfo> serverInfoMap = plugin.getServerInfoMap();
         if (serverInfoMap.containsKey(serverName)) {
             PteroServerInfo serverInfo = serverInfoMap.get(serverName);
-            apiClient.powerServer(serverInfo.getServerId(), "stop");
+            if (plugin.canMakeRequest()) {
+                apiClient.powerServer(serverInfo.getServerId(), "stop");
+            }
             sender.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is stopping")));
         } else {
         }

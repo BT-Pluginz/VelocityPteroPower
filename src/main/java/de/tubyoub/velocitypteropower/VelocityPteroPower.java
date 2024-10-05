@@ -39,27 +39,33 @@ import de.tubyoub.velocitypteropower.api.PanelAPIClient;
 import de.tubyoub.velocitypteropower.api.PanelType;
 import de.tubyoub.velocitypteropower.api.PelicanAPIClient;
 import de.tubyoub.velocitypteropower.api.PterodactylAPIClient;
-import de.tubyoub.velocitypteropower.libs.Metrics;
+import de.tubyoub.velocitypteropower.util.Metrics;
+import de.tubyoub.velocitypteropower.util.VersionChecker;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.logger.slf4j.ComponentLogger;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 
+import java.net.http.HttpResponse;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Main class for the VelocityPteroPower plugin.
  * This class handles the initialization of the plugin and the registration of commands and events.
  */
-@Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9.2.1", authors = {"TubYoub"}, description = "A plugin for Velocity that allows you to manage your Pterodactyl/Pelican servers from the Velocity console.", url = "https://github.com/TubYoub/VelocityPteroPower")
+@Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9.2.2", authors = {"TubYoub"}, description = "A plugin for Velocity that allows you to manage your Pterodactyl/Pelican servers from the Velocity console.", url = "https://github.com/TubYoub/VelocityPteroPower")
 public class VelocityPteroPower {
-    private final String version = "0.9.2.1";
+    private final String version = "0.9.2.2";
+    private final String modrinthID = "";
     private final int pluginId = 21465;
     private final ProxyServer proxyServer;
     private final ComponentLogger logger;
@@ -70,6 +76,10 @@ public class VelocityPteroPower {
     private PanelAPIClient apiClient;
     private final Metrics.Factory metricsFactory;
     private final Set<String> startingServers = ConcurrentHashMap.newKeySet();
+    private final AtomicInteger rateLimit = new AtomicInteger(60); // Default value, will be updated
+    private final AtomicInteger remainingRequests = new AtomicInteger(60); // Default value, will be updated
+    private final ReentrantLock rateLimitLock = new ReentrantLock();
+
 
     /**
      * Constructor for the VelocityPteroPower class.
@@ -87,7 +97,6 @@ public class VelocityPteroPower {
         this.dataDirectory = dataDirectory;
         this.commandManager = commandManager;
         this.configurationManager = new ConfigurationManager(this);
-
         this.metricsFactory = metricsFactory;
     }
 
@@ -164,8 +173,6 @@ public class VelocityPteroPower {
         this.serverInfoMap = configurationManager.getServerInfoMap();
         PteroServerInfo serverInfo = serverInfoMap.get(serverName);
 
-
-
         if (!serverInfoMap.containsKey(serverName)) {
             logger.warn("Server '" + serverName + "' not found in configuration.");
             player.sendMessage(
@@ -174,7 +181,7 @@ public class VelocityPteroPower {
                 .append(Component.text("] Server not found in configuration: " + serverName, NamedTextColor.WHITE)));
             return;
         }
-        if (apiClient.isServerOnline(serverInfo.getServerId())) {
+        if (apiClient.isServerOnline(serverInfo.getServerId()) && this.canMakeRequest()) {
             if (startingServers.contains(serverName)){
                 startingServers.remove(serverName);
             }
@@ -198,7 +205,7 @@ public class VelocityPteroPower {
         event.setResult(ServerPreConnectEvent.ServerResult.denied());
 
         proxyServer.getScheduler().buildTask(this, () -> {
-            if (apiClient.isServerOnline(serverInfo.getServerId())) {
+            if (apiClient.isServerOnline(serverInfo.getServerId()) && this.canMakeRequest()) {
                 connectPlayer(player, serverName);
             } else {
                 proxyServer.getScheduler().buildTask(this, () -> checkServerAndConnectPlayer(player, serverName)).schedule();
@@ -208,7 +215,7 @@ public class VelocityPteroPower {
 
     private void checkServerAndConnectPlayer(Player player, String serverName) {
         PteroServerInfo serverInfo = serverInfoMap.get(serverName);
-        if (apiClient.isServerOnline(serverInfo.getServerId())) {
+        if (apiClient.isServerOnline(serverInfo.getServerId()) && this.canMakeRequest()) {
             connectPlayer(player, serverName);
         } else {
             proxyServer.getScheduler().buildTask(this, () -> checkServerAndConnectPlayer(player, serverName)).delay(configurationManager.getStartupJoinDelay(), TimeUnit.SECONDS).schedule();
@@ -239,11 +246,41 @@ public class VelocityPteroPower {
             return;
         }
 
-        if (apiClient.isServerOnline(serverInfoMap.get(serverName).getServerId())) {
+        if (apiClient.isServerOnline(serverInfoMap.get(serverName).getServerId()) && this.canMakeRequest()) {
             player.createConnectionRequest(server).fireAndForget();
             startingServers.remove(serverName);
         }
     }
+    public boolean canMakeRequest() {
+        rateLimitLock.lock();
+        try {
+            return remainingRequests.get() > 0;
+        } finally {
+            rateLimitLock.unlock();
+        }
+    }
+
+    public void updateRateLimitInfo(HttpResponse<String> response) {
+        rateLimitLock.lock();
+        try {
+            String limitHeader = response.headers().firstValue("x-ratelimit-limit").orElse(null);
+            String remainingHeader = response.headers().firstValue("x-ratelimit-remaining").orElse(null);
+
+            if (limitHeader != null) {
+                rateLimit.set(Integer.parseInt(limitHeader));
+            }
+            if (remainingHeader != null) {
+                remainingRequests.set(Integer.parseInt(remainingHeader));
+            }
+        } finally {
+            rateLimitLock.unlock();
+            if (configurationManager.isPrintRateLimit()) {
+                logger.info("Rate limit updated: Limit: {}, Remaining: {}", rateLimit.get(), remainingRequests.get());
+            }
+        }
+    }
+
+
 
     /**
      * This method reloads the configuration for the VelocityPteroPower plugin.

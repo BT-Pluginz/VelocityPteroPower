@@ -12,7 +12,7 @@
  *
  * Violations will result in a ban of your plugin and account from bStats.
  */
-package de.tubyoub.velocitypteropower.libs;
+package de.tubyoub.velocitypteropower.util;
 
 import com.google.inject.Inject;
 import com.velocitypowered.api.plugin.PluginContainer;

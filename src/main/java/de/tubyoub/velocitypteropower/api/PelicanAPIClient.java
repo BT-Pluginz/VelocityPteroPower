@@ -9,6 +9,7 @@ import de.tubyoub.velocitypteropower.ConfigurationManager;
 import de.tubyoub.velocitypteropower.VelocityPteroPower;
 import org.slf4j.Logger;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -23,11 +24,13 @@ public class PelicanAPIClient implements PanelAPIClient {
     public final ConfigurationManager configurationManager;
     public final ProxyServer proxyServer;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final VelocityPteroPower plugin;
 
     private final HttpClient httpClient;
     private final ExecutorService executorService;
 
     public PelicanAPIClient(VelocityPteroPower plugin) {
+        this.plugin = plugin;
         this.logger = plugin.getLogger();
         this.configurationManager = plugin.getConfigurationManager();
         this.proxyServer = plugin.getProxyServer();
@@ -49,7 +52,7 @@ public class PelicanAPIClient implements PanelAPIClient {
                 .POST(HttpRequest.BodyPublishers.ofString("{\"signal\": \"" + signal + "\"}"))
                 .build();
 
-            client.send(request, HttpResponse.BodyHandlers.ofString());
+            plugin.updateRateLimitInfo(httpClient.send(request, HttpResponse.BodyHandlers.ofString()));
         } catch (Exception e) {
             logger.error("Error powering server.", e);
         }
@@ -57,26 +60,47 @@ public class PelicanAPIClient implements PanelAPIClient {
 
     @Override
     public boolean isServerOnline(String serverId) {
+        int retryCount = 3;
+        while (retryCount > 0) {
             try {
-                // Make the API request to get the server status
-                // Replace this with the actual API request code for the new panel API
-                String responseBody = "{\"object\": \"stats\", \"attributes\": {\"current_state\": \"running\", \"is_suspended\": false, \"resources\": {\"memory_bytes\": 1662955520, \"cpu_absolute\": 17.335, \"disk_bytes\": 180404668, \"network_rx_bytes\": 11376, \"network_tx_bytes\": 3184, \"uptime\": 183942}}}";
+                HttpRequest request = HttpRequest.newBuilder()
+                        .uri(URI.create(configurationManager.getPterodactylUrl() + "api/client/servers/" + serverId + "/resources"))
+                        .header("Accept", "application/json")
+                        .header("Content-Type", "application/json")
+                        .header("Authorization", "Bearer " + configurationManager.getPterodactylApiKey())
+                        .GET()
+                        .build();
 
-                JsonNode rootNode = objectMapper.readTree(responseBody);
-                JsonNode attributesNode = rootNode.get("attributes");
-
-                if (attributesNode != null) {
-                    String currentState = attributesNode.get("current_state").asText();
-                    boolean isSuspended = attributesNode.get("is_suspended").asBoolean();
-
-                    return currentState.equals("running") && !isSuspended;
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                plugin.updateRateLimitInfo(response);
+                String responseBody = response.body();
+                if (response.statusCode() == 200) {
+                    return responseBody.contains("{\"object\":\"stats\",\"attributes\":{\"current_state\":\"running\"");
+                } else {
+                    return false;
                 }
-            } catch (JsonProcessingException e) {
-                e.printStackTrace();
+            } catch (IOException | InterruptedException e) {
+                if (e.getMessage().contains("GOAWAY")) {
+                    retryCount--;
+                    if (retryCount == 0) {
+                        logger.error("Failed to check server status after retries: " + e.getMessage());
+                        return false;
+                    }
+                    logger.warn("GOAWAY received, retrying... (" + retryCount + " retries left)");
+                    try {
+                        Thread.sleep(1000); // Wait before retrying
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return false;
+                    }
+                } else {
+                    logger.error("Error checking server status: " + e.getMessage());
+                    return false;
+                }
             }
-
-            return false;
         }
+        return false;
+    }
 
     @Override
     public boolean isServerEmpty(String serverName) {

@@ -23,7 +23,7 @@
  */
 
 
-package de.tubyoub.velocitypteropower;
+package de.tubyoub.velocitypteropower.util;
 
 import java.io.BufferedReader;
 import java.io.IOException;

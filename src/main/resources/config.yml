@@ -4,7 +4,7 @@
 ################################
 
 # Version of the configuration file
-fileversion: 3
+fileversion: 4
 
 # Check for updates
 # If true, the plugin will check for updates on startup.
@@ -17,6 +17,10 @@ checkUpdate: true
 # restart the server so changes take effect
 # default: 10
 apiThreads: 10
+
+# print updated Rate Limit from the API response to console
+# default: false
+printRateLimit: false
 
 # This is used to check the server status to transfer players after the server starts
 startupJoin:

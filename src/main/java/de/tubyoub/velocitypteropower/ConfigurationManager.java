@@ -55,6 +55,7 @@ public class ConfigurationManager {
     private String apiKey;
     private PanelType panel;
     private boolean checkUpdate;
+    private boolean printRateLimit;
     private int startupJoinDelay;
     private int apiThreads;
     private final VelocityPteroPower plugin;
@@ -93,6 +94,7 @@ public class ConfigurationManager {
 
 
             checkUpdate = (boolean) config.get("checkUpdate");
+            printRateLimit = (boolean) config.get("printRateLimit");
             apiThreads = (int) config.get("apiThreads", 10);
             Section startupJoinSection = config.getSection("startupJoin");
             Map<String, Object> startupJoin = new HashMap<>();
@@ -236,5 +238,9 @@ public class ConfigurationManager {
 
     public int getApiThreads() {
         return apiThreads;
+    }
+
+    public boolean isPrintRateLimit() {
+        return printRateLimit;
     }
 }
