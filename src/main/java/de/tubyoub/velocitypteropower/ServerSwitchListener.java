@@ -31,7 +31,7 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import de.tubyoub.velocitypteropower.api.PanelAPIClient;
-import de.tubyoub.velocitypteropower.api.PterodactylAPIClient;
+import de.tubyoub.velocitypteropower.manager.ConfigurationManager;
 import org.slf4j.Logger;
 
 import java.util.Map;

@@ -39,6 +39,8 @@ import de.tubyoub.velocitypteropower.api.PanelAPIClient;
 import de.tubyoub.velocitypteropower.api.PanelType;
 import de.tubyoub.velocitypteropower.api.PelicanAPIClient;
 import de.tubyoub.velocitypteropower.api.PterodactylAPIClient;
+import de.tubyoub.velocitypteropower.manager.ConfigurationManager;
+import de.tubyoub.velocitypteropower.manager.MessagesManager;
 import de.tubyoub.velocitypteropower.util.Metrics;
 import de.tubyoub.velocitypteropower.util.VersionChecker;
 import net.kyori.adventure.text.Component;
@@ -52,8 +54,6 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
@@ -62,9 +62,9 @@ import java.util.concurrent.locks.ReentrantLock;
  * Main class for the VelocityPteroPower plugin.
  * This class handles the initialization of the plugin and the registration of commands and events.
  */
-@Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9.2.3", authors = {"TubYoub"}, description = "A plugin for Velocity that allows you to manage your Pterodactyl/Pelican servers from the Velocity console.", url = "https://github.com/TubYoub/VelocityPteroPower")
+@Plugin(id = "velocity-ptero-power", name = "VelocityPteroPower", version = "0.9.2.4", authors = {"TubYoub"}, description = "A plugin for Velocity that allows you to manage your Pterodactyl/Pelican servers from the Velocity console.", url = "https://github.com/TubYoub/VelocityPteroPower")
 public class VelocityPteroPower {
-    private final String version = "0.9.2.3";
+    private final String version = "0.9.2.4";
     private final String modrinthID = "";
     private final int pluginId = 21465;
     private final ProxyServer proxyServer;
@@ -73,6 +73,7 @@ public class VelocityPteroPower {
     private Map<String, PteroServerInfo> serverInfoMap;
     private final CommandManager commandManager;
     private final ConfigurationManager configurationManager;
+    private final MessagesManager messagesManager;
     private PanelAPIClient apiClient;
     private final Metrics.Factory metricsFactory;
     private final Set<String> startingServers = ConcurrentHashMap.newKeySet();
@@ -96,6 +97,7 @@ public class VelocityPteroPower {
         this.dataDirectory = dataDirectory;
         this.commandManager = commandManager;
         this.configurationManager = new ConfigurationManager(this);
+        this.messagesManager = new MessagesManager(this);
         this.metricsFactory = metricsFactory;
     }
 
@@ -114,6 +116,7 @@ public class VelocityPteroPower {
         logger.info(MiniMessage.miniMessage().deserialize("<#4287f5>  \\     /   |    |    |    |"+ "<#00ff77>         VelocityPteroPower <#6b6c6e>v" + version));
         logger.info(MiniMessage.miniMessage().deserialize("<#4287f5>   \\___/    |____|tero|____|ower" + "<#A9A9A9>     Running with Blackmagic on Velocity"));
         configurationManager.loadConfig();
+        messagesManager.loadMessages();
         if (configurationManager.getPanelType() == PanelType.pelican) {
             logger.info("detected the pelican panel");
             this.apiClient = new PelicanAPIClient(this);
@@ -146,13 +149,15 @@ public class VelocityPteroPower {
             if (timeout < 0) {
                 return;
             }
-            logger.info("Scheduling server shutdown for " + serverName + " in " + timeout + " seconds.");
+            logger.info(messagesManager.getMessage("shutdown-scheduled")
+                    .replace("%server%", serverName)
+                    .replace("%timeout%", String.valueOf(timeout)));
             proxyServer.getScheduler().buildTask(this, () -> {
                 if (apiClient.isServerEmpty(serverName)) {
                     apiClient.powerServer(serverID, "stop");
-                    logger.info("Shutting down server: " + serverName);
+                    logger.info(messagesManager.getMessage("server-shutting-down").replace("%server%", serverName));
                 }else {
-                    logger.info("Shutdown cancelled for server: " + serverName + ". Players are present.");
+                    logger.info(messagesManager.getMessage("shutdown-cancelled").replace("%server%", serverName));
                 }
             }).delay(timeout, TimeUnit.SECONDS).schedule();
         }
@@ -173,11 +178,10 @@ public class VelocityPteroPower {
         PteroServerInfo serverInfo = serverInfoMap.get(serverName);
 
         if (!serverInfoMap.containsKey(serverName)) {
-            logger.warn("Server '" + serverName + "' not found in configuration.");
+            logger.warn(messagesManager.getMessage("server-not-found").replace("%server%", serverName));
             player.sendMessage(
-                Component.text("[", NamedTextColor.WHITE)
-                .append(Component.text("VPP", TextColor.color(66,135,245)))
-                .append(Component.text("] Server not found in configuration: " + serverName, NamedTextColor.WHITE)));
+                this.getPluginPrefix()
+                .append(Component.text(messagesManager.getMessage("server-not-found").replace("%server%", serverName), NamedTextColor.WHITE)));
             return;
         }
         if (apiClient.isServerOnline(serverName) && this.canMakeRequest()) {
@@ -188,9 +192,8 @@ public class VelocityPteroPower {
         }
         if (startingServers.contains(serverName)){
             player.sendMessage(
-                Component.text("[", NamedTextColor.WHITE)
-                .append(Component.text("VPP", TextColor.color(66,135,245)))
-                .append(Component.text("] " +  serverName +" is already starting", NamedTextColor.WHITE)));
+                this.getPluginPrefix()
+                .append(Component.text( messagesManager.getMessage("server-starting").replace("%server%",serverName), NamedTextColor.WHITE)));
             event.setResult(ServerPreConnectEvent.ServerResult.denied());
             return;
         }
@@ -198,9 +201,8 @@ public class VelocityPteroPower {
         startingServers.add(serverName);
         apiClient.powerServer(serverInfo.getServerId(), "start");
         player.sendMessage(
-                Component.text("[", NamedTextColor.WHITE)
-                .append(Component.text("VPP", TextColor.color(66,135,245)))
-                .append(Component.text("] Starting server: " + serverName, NamedTextColor.WHITE)));
+                this.getPluginPrefix()
+                .append(Component.text(messagesManager.getMessage("starting-server").replace("%server%", serverName), NamedTextColor.WHITE)));
         event.setResult(ServerPreConnectEvent.ServerResult.denied());
 
         proxyServer.getScheduler().buildTask(this, () -> {
@@ -279,6 +281,12 @@ public class VelocityPteroPower {
         }
     }
 
+    public Component getPluginPrefix() {
+        return Component.text("[", NamedTextColor.WHITE)
+            .append(Component.text(messagesManager.getMessage("prefix"), TextColor.color(66,135,245)))
+            .append(Component.text("] ", NamedTextColor.WHITE));
+    }
+
     /**
      * This method reloads the configuration for the VelocityPteroPower plugin.
      * It calls the loadConfig method of the ConfigurationManager instance to reload the configuration.
@@ -287,6 +295,7 @@ public class VelocityPteroPower {
     public void reloadConfig() {
         configurationManager.loadConfig();
         this.serverInfoMap = configurationManager.getServerInfoMap();
+        messagesManager.loadMessages();
     }
     /**
      * This method returns the map of server names to PteroServerInfo objects.
@@ -340,6 +349,9 @@ public class VelocityPteroPower {
      */
     public ConfigurationManager getConfigurationManager() {
         return configurationManager;
+    }
+    public MessagesManager getMessagesManager() {
+        return messagesManager;
     }
     public void onProxyShutdown(ProxyShutdownEvent event) {
         apiClient.shutdown();

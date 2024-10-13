@@ -4,11 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerPing;
-import de.tubyoub.velocitypteropower.ConfigurationManager;
+import de.tubyoub.velocitypteropower.manager.ConfigurationManager;
 import de.tubyoub.velocitypteropower.VelocityPteroPower;
 import org.slf4j.Logger;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -67,10 +66,10 @@ public class PelicanAPIClient implements PanelAPIClient {
                 CompletableFuture<ServerPing> pingFuture = server.ping();
                 ServerPing pingResult = pingFuture.get(configurationManager.getPingTimeout(), TimeUnit.MILLISECONDS);
                 return pingResult != null;
+            } catch (NullPointerException npe) {
+                return false;
             } catch (Exception e) {
-                if (!(e.getCause() instanceof NullPointerException)) {
-                    logger.debug("Error pinging server {}: {}", serverName, e.getMessage());
-                }
+                logger.debug("Error pinging server {}: {}", serverName, e.getMessage());
                 return false;
             }
         } else {

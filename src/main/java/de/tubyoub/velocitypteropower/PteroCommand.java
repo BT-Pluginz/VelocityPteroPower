@@ -26,10 +26,9 @@ package de.tubyoub.velocitypteropower;
 
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.SimpleCommand;
-import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import de.tubyoub.velocitypteropower.api.PanelAPIClient;
-import de.tubyoub.velocitypteropower.api.PterodactylAPIClient;
+import de.tubyoub.velocitypteropower.manager.ConfigurationManager;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
@@ -88,25 +87,31 @@ public class PteroCommand implements SimpleCommand {
                 if (sender.hasPermission("ptero.start")) {
                     startServer(invocation.source(), args);
                 } else {
-                    sender.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
+                    sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("no-permission"),TextColor.color(255,0,0))));
                 }
                 break;
             case "stop":
                 if (sender.hasPermission("ptero.stop")) {
                     stopServer(sender, args);
                 } else {
-                    sender.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
+                    sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("no-permission"),TextColor.color(255,0,0))));
                 }
                 break;
             case "reload":
                 if (sender.hasPermission("ptero.reload")) {
                     reloadConfig(sender);
                 } else {
-                    sender.sendMessage(getSPPPrefix().append(Component.text("You do not have permission to use this command.",TextColor.color(255,0,0))));
+                    sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("no-permission"),TextColor.color(255,0,0))));
                 }
                 break;
+            case "restart":
+                if (sender.hasPermission("ptero.restart")) {
+                    restartServer(sender, args);
+                } else {
+                    sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("no-permission"), TextColor.color(255, 0, 0))));
+                }
             default:
-                sender.sendMessage(getSPPPrefix().append(Component.text("Unknown subcommand: " + subCommand)));
+                sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("unknown-subcommand") + subCommand)));
                 displayHelp(sender);
         }
     }
@@ -119,7 +124,7 @@ public class PteroCommand implements SimpleCommand {
      */
     private void startServer(CommandSource sender, String[] args) {
         if (args.length < 2) {
-            sender.sendMessage(getSPPPrefix().append(Component.text("Usage: /ptero start <serverName>", NamedTextColor.RED)));
+            sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("usage") + " /ptero start <serverName>", NamedTextColor.RED)));
             return;
         }
         String serverName = args[1];
@@ -129,7 +134,7 @@ public class PteroCommand implements SimpleCommand {
             if (plugin.canMakeRequest()) {
                 apiClient.powerServer(serverInfo.getServerId(), "start");
             }
-            sender.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is starting")));
+            sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("starting-server").replace("%server%", serverName))));
         } else {
         }
     }
@@ -142,7 +147,7 @@ public class PteroCommand implements SimpleCommand {
      */
     private void stopServer(CommandSource sender, String[] args) {
         if (args.length < 2) {
-            sender.sendMessage(getSPPPrefix().append(Component.text("Usage: /ptero stop <serverName>", TextColor.color(66,135,245))));
+            sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("usage") + " /ptero stop <serverName>", TextColor.color(66,135,245))));
             return;
         }
         String serverName = args[1];
@@ -152,7 +157,24 @@ public class PteroCommand implements SimpleCommand {
             if (plugin.canMakeRequest()) {
                 apiClient.powerServer(serverInfo.getServerId(), "stop");
             }
-            sender.sendMessage(getSPPPrefix().append(Component.text("The server: "+ serverName + " is stopping")));
+            sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("server-shutting-down").replace("%server%", serverName))));
+        } else {
+        }
+    }
+
+    private void restartServer(CommandSource sender, String[] args) {
+        if (args.length < 2) {
+            sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("usage") + " /ptero restart <serverName>", TextColor.color(66,135,245))));
+            return;
+        }
+        String serverName = args[1];
+        Map<String, PteroServerInfo> serverInfoMap = plugin.getServerInfoMap();
+        if (serverInfoMap.containsKey(serverName)) {
+            PteroServerInfo serverInfo = serverInfoMap.get(serverName);
+            if (plugin.canMakeRequest()) {
+                apiClient.powerServer(serverInfo.getServerId(), "restart");
+            }
+            sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("server-restarting").replace("%server%", serverName))));
         } else {
         }
     }
@@ -164,7 +186,7 @@ public class PteroCommand implements SimpleCommand {
      */
     private void reloadConfig(CommandSource sender) {
         plugin.reloadConfig();
-        sender.sendMessage(getSPPPrefix().append(Component.text("Configuration reloaded.",TextColor.color(0,255,0))));
+        sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("config-reload"),TextColor.color(0,255,0))));
     }
 
     /**
@@ -181,11 +203,12 @@ public class PteroCommand implements SimpleCommand {
             List<String> suggestions = new ArrayList<>();
             suggestions.add("start");
             suggestions.add("stop");
+            suggestions.add("restart");
             suggestions.add("reload");
             return suggestions;
         } else if (currentArgs.length == 2) {
             String subCommand = currentArgs[0].toLowerCase();
-            if (subCommand.equals("start") || subCommand.equals("stop")) {
+            if (subCommand.equals("start") || subCommand.equals("stop") || subCommand.equals("restart")) {
                 if (plugin.getServerInfoMap() != null) {
                     return plugin.getServerInfoMap().keySet().stream()
                             .filter(serverName -> serverName.startsWith(currentArgs[1]))
@@ -199,16 +222,10 @@ public class PteroCommand implements SimpleCommand {
     }
 
     private void displayHelp(CommandSource sender) {
-        sender.sendMessage(getSPPPrefix().append(Component.text("Available commands:", NamedTextColor.GREEN)));
-        sender.sendMessage(getSPPPrefix().append(Component.text("/ptero start <serverName>", TextColor.color(66,135,245))));
-        sender.sendMessage(getSPPPrefix().append(Component.text("/ptero stop <serverName>", TextColor.color(66,135,245))));
-        sender.sendMessage(getSPPPrefix().append(Component.text("/ptero reload", TextColor.color(66,135,245))));
-        sender.sendMessage(getSPPPrefix().append(Component.text("/ptero help", TextColor.color(66,135,245))));
-}
-
-    private Component getSPPPrefix() {
-        return Component.text("[", NamedTextColor.WHITE)
-            .append(Component.text("VPP", TextColor.color(66,135,245)))
-            .append(Component.text("] ", NamedTextColor.WHITE));
+        sender.sendMessage(plugin.getPluginPrefix().append(Component.text(plugin.getMessagesManager().getMessage("available-commands-helpcommand"), NamedTextColor.GREEN)));
+        sender.sendMessage(plugin.getPluginPrefix().append(Component.text("/ptero start <serverName>", TextColor.color(66,135,245))));
+        sender.sendMessage(plugin.getPluginPrefix().append(Component.text("/ptero stop <serverName>", TextColor.color(66,135,245))));
+        sender.sendMessage(plugin.getPluginPrefix().append(Component.text("/ptero reload", TextColor.color(66,135,245))));
+        sender.sendMessage(plugin.getPluginPrefix().append(Component.text("/ptero help", TextColor.color(66,135,245))));
     }
 }

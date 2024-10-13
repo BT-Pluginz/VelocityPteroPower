@@ -1,0 +1,23 @@
+# Dont touch this
+#------------
+fileversion: 1
+#------------
+# player messages
+# the prefix is shown before every message send to the player
+# %server% is replaced with the server name (does not work for every message)
+# %timeout% is replaced with the timeout in seconds (does not work for every message)
+prefix: "VPP"
+no-permission: "You do not have permission to do that."
+usage: "Usage:"
+unknown-subcommand: "Unknown subcommand: "
+server-shutting-down: "Shutting down server: %server%"
+starting-server: "Starting server: %server%"
+server-starting: "%server% is already starting"
+server-restarting: "Restarting server: %server%"
+config-reload: "Configuration reloaded"
+available-commands-helpcommand: "Available commands:"
+server-not-found: "Server not found in configuration: %server%"
+
+# console messages
+shutdown-scheduled: "Scheduling server shutdown for %server% in %timeout% seconds."
+shutdown-cancelled: "Shutdown cancelled for server: %server%. Players are present."
