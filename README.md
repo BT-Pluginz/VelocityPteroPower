@@ -2,19 +2,34 @@
 ![Static Badge](https://img.shields.io/badge/Velocity-green) <br>
 [![forthebadge](https://forthebadge.com/images/badges/works-on-my-machine.svg)](https://forthebadge.com)
 
+<p align="center">
+    <a href="https://discord.pluginz.dev">
+        <img src="https://i.imgur.com/JgDt1Fl.png" width="300">
+    </a>
+    <br>
+    <i>Please join the Discord if you have questions!</i>
+</p>
+
 This is a Plugin for Velocity Servers which can dynamically start and stop servers that are managed with the [Pterodactyl Server Panel](https://pterodactyl.io/)
 
 This Project is a port of the [BungeePteroPower](https://github.com/Kamesuta/BungeePteroPower)
 ## Features
-- Start a Server manually with `/ptero start`
-- Stop a Server manually with `/ptero stop`
-- Reload the config using `/ptero reload`
+- start a Server manually with `/ptero start`
+- stop a Server manually with `/ptero stop`
+- restart a server manually with `/ptero restart`
+- reload the config using `/ptero reload`
 <br><br>
-- The plugin will automaticly start a Server that a player is trying to connect (if the server is configured in the config file)
+- The plugin will automatically start a Server that a player is trying to connect (if the server is configured in the config file)
+-  The plugin will automatically schedule a server shutdown if a server is empty for a certain amount of time (time is configurable
+   in the config file)
+  - scheduled shutdowns will be canceled if a player joins the server that is scheduled to be shutdown
+- The plugin will never exceed the RateLimit of the Panel API
+- automatic checks for new updates of the plugin
 
 ## Permissions
 - `ptero.start` Permission for the `/ptero start` command
 - `ptero.stop`Permission for the `/ptero stop` command
+- `ptero.restart` Permission for the `/ptero restart` command
 - `ptero.reload` Permission for the `/ptero reload` command
 ## Installation 
 To install the Plugin on your Velocity Server put the `.jar` in your plugin folder and `restart/start` your server.
@@ -30,6 +45,21 @@ To install the Plugin on your Velocity Server put the `.jar` in your plugin fold
 fileversion: '1'
 
 checkUpdate: true
+
+# How many Threads should be used to check the server status
+# The more threads the more requests can be handled at the same time
+# more threads = more resources used
+# restart the server so changes take effect
+# default: 10
+apiThreads: 10
+
+# print updated Rate Limit from the API response to console
+# default: false
+printRateLimit: true
+
+# How long the ping to the server lasts, to check if its is online, until it times out (in milliseconds)
+# default: 1000
+pingTimeout: 1000
 
 # This is used to check the server status to transfer players after the server starts
 startupJoin:
@@ -67,7 +97,7 @@ servers:
   test:
     id: abcd1234
     timeout: 5
-  fitnacraft1:
+  mc-purpur-1:
     id: ab12cd34
     timeout: 180
   mcforge1:
@@ -78,12 +108,11 @@ servers:
 
 ## Support
 
-If you have any issues, please report. And if u have any suggestions, feel free to open an issue.
+If you have any issues, or suggestions please open a [issue](https://github.com/TubYoub/VelocityPteroPower/issues/new) or join the discord
 
 ## Contributing
 
-I currently have no plans to get co-contributer's on this project, but if you have any suggestions, feel free to open an issue
-
+Join the [discord](https://discord.pluginz.dev) and talk with me about your idea or just do it yourself and open a pull request.
 
 ## License
 
