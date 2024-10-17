@@ -100,9 +100,9 @@ public class ConfigurationManager {
                             .build());
 
 
-            checkUpdate = (boolean) config.get("checkUpdate");
-            printRateLimit = (boolean) config.get("printRateLimit");
-            pingTimeout = (int) config.get("pingTimeout");
+            checkUpdate = (boolean) config.get("checkUpdate", true);
+            printRateLimit = (boolean) config.get("printRateLimit", false);
+            pingTimeout = (int) config.get("pingTimeout", 1000);
             apiThreads = (int) config.get("apiThreads", 10);
             Section startupJoinSection = config.getSection("startupJoin");
             Map<String, Object> startupJoin = new HashMap<>();
