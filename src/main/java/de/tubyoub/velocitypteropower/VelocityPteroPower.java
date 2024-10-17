@@ -35,6 +35,7 @@ import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.scheduler.ScheduledTask;
 import de.tubyoub.velocitypteropower.api.PanelAPIClient;
 import de.tubyoub.velocitypteropower.api.PanelType;
 import de.tubyoub.velocitypteropower.api.PelicanAPIClient;
@@ -54,6 +55,7 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
@@ -145,14 +147,14 @@ public class VelocityPteroPower {
      * @param serverID the ID of the server
      * @param timeout the timeout in seconds after which the server should be shut down if it is empty
      */
-        public void scheduleServerShutdown(String serverName,String serverID, int timeout) {
+        public ScheduledTask scheduleServerShutdown(String serverName, String serverID, int timeout) {
             if (timeout < 0) {
-                return;
+                return null;
             }
             logger.info(messagesManager.getMessage("shutdown-scheduled")
                     .replace("%server%", serverName)
                     .replace("%timeout%", String.valueOf(timeout)));
-            proxyServer.getScheduler().buildTask(this, () -> {
+            return proxyServer.getScheduler().buildTask(this, () -> {
                 if (apiClient.isServerEmpty(serverName)) {
                     apiClient.powerServer(serverID, "stop");
                     logger.info(messagesManager.getMessage("server-shutting-down").replace("%server%", serverName));
