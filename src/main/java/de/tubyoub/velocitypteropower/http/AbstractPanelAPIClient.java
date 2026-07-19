@@ -26,6 +26,7 @@ public abstract class AbstractPanelAPIClient implements PanelAPIClient {
 
     // per-server resource usage cache
     protected final java.util.concurrent.ConcurrentHashMap<String, CacheEntry> resourceCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, CompletableFuture<de.tubyoub.velocitypteropower.model.ServerResourceUsage>> inFlightFetches = new java.util.concurrent.ConcurrentHashMap<>();
 
     protected final Logger logger;
     protected final ConfigurationManager configurationManager;
@@ -80,16 +81,52 @@ public abstract class AbstractPanelAPIClient implements PanelAPIClient {
      */
     @Override
     public boolean isServerOnline(String serverName, String serverId) {
+        try {
+            var cache = plugin.getServerStateCache();
+            if (cache != null && cache.isRunningFresh(serverId)) {
+                ConfigurationManager.ServerCheckMethod method =
+                        configurationManager.resolveCheckMethod(
+                                plugin.getServerInfoMap() != null ? plugin.getServerInfoMap().get(serverName) : null);
+                if (method == ConfigurationManager.ServerCheckMethod.PANEL_API
+                        || method == ConfigurationManager.ServerCheckMethod.HYBRID) {
+                    if (method == ConfigurationManager.ServerCheckMethod.PANEL_API) {
+                        return true;
+                    }
+                    // HYBRID still needs ping
+                    return checkOnlineViaVelocityPing(serverName);
+                }
+            }
+        } catch (Exception ignored) {}
+        ConfigurationManager.ServerCheckMethod methodOverride = null;
+        try {
+            var map = plugin.getServerInfoMap();
+            if (map != null) {
+                var info = map.get(serverName);
+                if (info != null && info.getCheckMethodOverride() != null) {
+                    methodOverride = info.getCheckMethodOverride();
+                }
+            }
+        } catch (Exception ignored) {}
+        return isServerOnline(serverName, serverId, methodOverride);
+    }
+
+    /**
+     * Checks if a server is online using the resolved check method (global or per-server override).
+     */
+    public boolean isServerOnline(String serverName, String serverId,
+                                  ConfigurationManager.ServerCheckMethod methodOverride) {
         ConfigurationManager.ServerCheckMethod method =
-            configurationManager.getServerCheckMethod();
+            methodOverride != null ? methodOverride : configurationManager.getServerCheckMethod();
 
         switch (method) {
             case VELOCITY_PING:
                 return checkOnlineViaVelocityPing(serverName);
             case PANEL_API:
                 return checkOnlineViaPanelApi(serverName, serverId);
+            case HYBRID:
+                return checkOnlineViaPanelApi(serverName, serverId)
+                        && checkOnlineViaVelocityPing(serverName);
             default:
-                // Should not happen with enum, but just in case
                 logger.error(
                     "Unknown ServerCheckMethod: {}. Defaulting to false.",
                     method
@@ -215,7 +252,12 @@ public abstract class AbstractPanelAPIClient implements PanelAPIClient {
         } else {
             logger.debug("Resource cache DISABLED (ttl=0) for {}.", serverId);
         }
-        return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<de.tubyoub.velocitypteropower.model.ServerResourceUsage> existing = inFlightFetches.get(serverId);
+        if (existing != null && !existing.isDone()) {
+            logger.debug("Resource fetch IN-FLIGHT reuse for {}.", serverId);
+            return existing;
+        }
+        CompletableFuture<de.tubyoub.velocitypteropower.model.ServerResourceUsage> future = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
             try {
                 de.tubyoub.velocitypteropower.model.ServerResourceUsage data = supplier.get();
                 if (ttl > 0 && data != null) {
@@ -228,5 +270,8 @@ public abstract class AbstractPanelAPIClient implements PanelAPIClient {
                 return de.tubyoub.velocitypteropower.model.ServerResourceUsage.unavailable();
             }
         }, executorService);
+        inFlightFetches.put(serverId, future);
+        future.whenComplete((r, t) -> inFlightFetches.remove(serverId, future));
+        return future;
     }
 }

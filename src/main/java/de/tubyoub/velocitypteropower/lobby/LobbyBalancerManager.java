@@ -46,6 +46,7 @@ public class LobbyBalancerManager {
     // Track recent start attempts and cooldowns for problematic lobbies
     private final java.util.concurrent.ConcurrentHashMap<String, Long> lastStartAttempt = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ConcurrentHashMap<String, Long> cooldownUntil = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> emptySince = new java.util.concurrent.ConcurrentHashMap<>();
 
     public LobbyBalancerManager(VelocityPteroPower plugin) {
         this.plugin = plugin;
@@ -120,8 +121,12 @@ public class LobbyBalancerManager {
             cleanupCooldowns();
             fallbackCheckAndStartAlternate();
             ensureMinOnline();
+            ensureLimboOnlineIfNeeded();
             if (config.isBalancerAutoScaleEnabled()) {
                 scaleUpIfNeeded();
+            }
+            if (config.isBalancerScaleDownEnabled()) {
+                scaleDownIfNeeded();
             }
         } catch (Exception ex) {
             logger.warn("Error during lobby balancer health-check: {}", ex.toString());
@@ -202,6 +207,75 @@ public class LobbyBalancerManager {
             }
         }
     }
+
+    private void ensureLimboOnlineIfNeeded() {
+        if (!config.isSendToLimboOnStart()) return;
+        List<String> limbos = config.getBalancerLimbos();
+        if (limbos == null || limbos.isEmpty()) return;
+        boolean anyOnline = limbos.stream().anyMatch(this::isReachable);
+        if (anyOnline) return;
+        for (String name : limbos) {
+            if (inCooldown(name)) continue;
+            if (tryStart(name)) {
+                logger.info("Ensuring limbo online: started '{}'.", name);
+                break;
+            }
+        }
+    }
+
+    private void scaleDownIfNeeded() {
+        List<String> lobbies = getConfiguredLobbiesToUse();
+        if (lobbies.isEmpty()) return;
+        int minOnline = Math.max(0, config.getBalancerMinOnline());
+        List<String> online = lobbies.stream().filter(this::isReachable).collect(Collectors.toList());
+        if (online.size() <= minOnline) {
+            emptySince.keySet().removeIf(k -> !online.contains(k));
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        long idleMs = config.getBalancerScaleDownIdleSeconds() * 1000L;
+        String bestStop = null;
+        int bestPlayers = Integer.MAX_VALUE;
+
+        for (String name : online) {
+            int players = proxy.getServer(name).map(s -> s.getPlayersConnected().size()).orElse(0);
+            if (players > 0) {
+                emptySince.remove(name);
+                continue;
+            }
+            // Skip if players are waiting/transferring toward this lobby
+            if (plugin.getPlayerConnectionHandler() != null
+                    && plugin.getPlayerConnectionHandler().hasActiveWaiters(name)) {
+                emptySince.remove(name);
+                continue;
+            }
+            emptySince.putIfAbsent(name, now);
+            Long since = emptySince.get(name);
+            if (since == null || now - since < idleMs) continue;
+            if (players < bestPlayers) {
+                bestPlayers = players;
+                bestStop = name;
+            }
+        }
+
+        if (bestStop == null) return;
+        if (online.size() - 1 < minOnline) return;
+
+        PteroServerInfo info = managedServers.get(bestStop);
+        if (info == null) return;
+        if (plugin.getMaintenanceService() != null
+                && plugin.getMaintenanceService().isServerInMaintenance(bestStop)) {
+            return;
+        }
+        if (!plugin.getRateLimitTracker().canMakeRequest(
+                de.tubyoub.velocitypteropower.util.PanelRequestPriority.BALANCER)) {
+            return;
+        }
+        logger.info("Auto-scale down: stopping empty lobby '{}' (keeping minOnline={}).", bestStop, minOnline);
+        apiClient.powerServer(info.getServerId(), PowerSignal.STOP);
+        emptySince.remove(bestStop);
+    }
     // endregion
 
     // region Helpers
@@ -214,7 +288,12 @@ public class LobbyBalancerManager {
         }
         PteroServerInfo info = managedServers.get(serverName);
         if (info == null) {
-            logger.warn("Cannot auto-start '{}': not managed by VPP (no panel id in config).", serverName);
+            logger.debug("Cannot auto-start '{}': not managed by VPP (no panel id in config).", serverName);
+            return false;
+        }
+        if (plugin.getMaintenanceService() != null
+                && plugin.getMaintenanceService().isServerInMaintenance(serverName)) {
+            logger.debug("Skipping start for '{}' — maintenance mode.", serverName);
             return false;
         }
         // Throttle repeat start attempts for the same lobby to avoid spamming panel/API and logs
@@ -373,10 +452,19 @@ public class LobbyBalancerManager {
         List<String> lobbies = config.getBalancerLobbies();
         if (lobbies == null) lobbies = Collections.emptyList();
         int use = Math.max(0, config.getBalancerLobbiesToUse());
-        if (use > 0 && use < lobbies.size()) {
-            return lobbies.subList(0, use);
+        List<String> filtered = lobbies.stream()
+            .filter(name -> {
+                if (managedServers.containsKey(name)) {
+                    return true;
+                }
+                logger.debug("Skipping unmanaged lobby '{}' (not in servers config).", name);
+                return false;
+            })
+            .collect(Collectors.toList());
+        if (use > 0 && use < filtered.size()) {
+            return filtered.subList(0, use);
         }
-        return lobbies;
+        return filtered;
     }
     private Strategy strategy() {
         String name = config.getBalancerStrategyName();

@@ -50,6 +50,7 @@ public class VelocityPteroPower {
     private WhitelistManager whitelistManager;
     private PanelAPIClient apiClient;
     private RateLimitTracker rateLimitTracker;
+    private de.tubyoub.velocitypteropower.util.PanelRequestScheduler panelRequestScheduler;
     private UpdateService updateService;
     private PlayerConnectionHandler playerConnectionHandler;
     private ServerLifecycleManager serverLifecycleManager;
@@ -57,11 +58,17 @@ public class VelocityPteroPower {
     private LobbyBalancerManager lobbyBalancerManager;
     private de.tubyoub.velocitypteropower.service.LimboTrackerService limboTrackerService;
     private de.tubyoub.velocitypteropower.service.MoveHistoryService moveHistoryService;
+    private de.tubyoub.velocitypteropower.service.QueueProgressService queueProgressService;
+    private de.tubyoub.velocitypteropower.service.PersistentQueueService persistentQueueService;
+    private de.tubyoub.velocitypteropower.service.MaintenanceService maintenanceService;
+    private de.tubyoub.velocitypteropower.service.ServerStateCache serverStateCache;
+    private de.tubyoub.velocitypteropower.http.PanelWebSocketService panelWebSocketService;
 
     private FilteredComponentLogger filteredLogger;
 
     private Map<String, PteroServerInfo> serverInfoMap = new ConcurrentHashMap<>();
     private final Set<String> startingServers = ConcurrentHashMap.newKeySet();
+    private final Map<String, Set<UUID>> waitingPlayers = new ConcurrentHashMap<>();
     private final Map<UUID, Long> playerCooldowns = new ConcurrentHashMap<>();
     private final Map<String, Long> shutdownDeadlines = new ConcurrentHashMap<>();
     private final Map<String, UUID> startInitiators = new ConcurrentHashMap<>();
@@ -103,6 +110,8 @@ public class VelocityPteroPower {
         messagesManager.loadMessages();
 
         this.rateLimitTracker = new RateLimitTracker(filteredLogger, configurationManager);
+        this.panelRequestScheduler = new de.tubyoub.velocitypteropower.util.PanelRequestScheduler(
+                this, rateLimitTracker, configurationManager);
         this.updateService = new UpdateService(filteredLogger, configurationManager, VERSION, MODRINTH_PROJECT_ID);
         initializeApiClient();
         if (this.apiClient == null) {
@@ -151,6 +160,31 @@ public class VelocityPteroPower {
         } else {
             this.moveHistoryService = null;
         }
+
+        this.maintenanceService = new de.tubyoub.velocitypteropower.service.MaintenanceService(this);
+        this.persistentQueueService = new de.tubyoub.velocitypteropower.service.PersistentQueueService(
+                this, configurationManager.getPersistentQueueTtlSeconds());
+        this.queueProgressService = new de.tubyoub.velocitypteropower.service.QueueProgressService(this);
+        this.queueProgressService.start();
+        this.serverStateCache = new de.tubyoub.velocitypteropower.service.ServerStateCache(
+                configurationManager.getServerStateCacheTtlSeconds());
+        this.panelWebSocketService = new de.tubyoub.velocitypteropower.http.PanelWebSocketService(this, serverStateCache);
+        this.panelWebSocketService.start();
+        proxyServer.getScheduler().buildTask(this, () -> {
+            try { if (persistentQueueService != null) persistentQueueService.purgeExpired(); } catch (Exception ignored) {}
+        }).delay(60, java.util.concurrent.TimeUnit.SECONDS).schedule();
+        // reschedule purge periodically
+        Runnable purgeLoop = new Runnable() {
+            @Override public void run() {
+                try { if (persistentQueueService != null) persistentQueueService.purgeExpired(); } catch (Exception ignored) {}
+                finally {
+                    proxyServer.getScheduler().buildTask(VelocityPteroPower.this, this)
+                            .delay(60, java.util.concurrent.TimeUnit.SECONDS).schedule();
+                }
+            }
+        };
+        proxyServer.getScheduler().buildTask(this, purgeLoop)
+                .delay(120, java.util.concurrent.TimeUnit.SECONDS).schedule();
         
         // Schedule periodic enforcement of always-online servers
         this.serverLifecycleManager.scheduleAlwaysOnlineMaintenance();
@@ -187,14 +221,40 @@ public class VelocityPteroPower {
             Runnable prefetchTask = new Runnable() {
                 @Override public void run() {
                     try {
+                        if (panelRequestScheduler != null && panelRequestScheduler.shouldPauseBackground()) {
+                            filteredLogger.debug("Resource prefetch paused (rate pressure or waiters).");
+                            return;
+                        }
+                        if (!rateLimitTracker.canMakeRequest(
+                                de.tubyoub.velocitypteropower.util.PanelRequestPriority.BACKGROUND)) {
+                            filteredLogger.debug("Resource prefetch skipped due to rate limit.");
+                            return;
+                        }
                         Map<String, PteroServerInfo> map = getServerInfoMap();
                         if (map != null && !map.isEmpty()) {
+                            int staggerMs = Math.max(100, (interval * 1000) / Math.max(1, map.size()));
+                            int idx = 0;
                             for (PteroServerInfo info : map.values()) {
-                                try {
-                                    filteredLogger.debug("Prefetching resources for serverId={}", info.getServerId());
-                                    apiClient.fetchServerResources(info.getServerId());
-                                } catch (Exception ignored) {
+                                if (panelRequestScheduler != null && panelRequestScheduler.shouldPauseBackground()) {
+                                    filteredLogger.debug("Resource prefetch stopped early (background pause).");
+                                    break;
                                 }
+                                if (!rateLimitTracker.canMakeRequest(
+                                        de.tubyoub.velocitypteropower.util.PanelRequestPriority.BACKGROUND)) {
+                                    filteredLogger.debug("Resource prefetch stopped early due to rate limit.");
+                                    break;
+                                }
+                                final PteroServerInfo target = info;
+                                proxyServer.getScheduler().buildTask(VelocityPteroPower.this, () -> {
+                                    try {
+                                        filteredLogger.debug("Prefetching resources for serverId={}", target.getServerId());
+                                        rateLimitTracker.consumeOne();
+                                        apiClient.fetchServerResources(target.getServerId());
+                                    } catch (Exception ex) {
+                                        rateLimitTracker.restoreOne();
+                                    }
+                                }).delay(idx * staggerMs, java.util.concurrent.TimeUnit.MILLISECONDS).schedule();
+                                idx++;
                             }
                         }
                     } catch (Exception ex) {
@@ -295,6 +355,10 @@ public class VelocityPteroPower {
         } catch (Exception ex) {
             filteredLogger.warn("Error during shutdown stop sequence: {}", ex.toString());
         } finally {
+            try { if (queueProgressService != null) queueProgressService.stop(); } catch (Exception ignored) {}
+            try { if (panelWebSocketService != null) panelWebSocketService.stop(); } catch (Exception ignored) {}
+            try { if (persistentQueueService != null) persistentQueueService.save(); } catch (Exception ignored) {}
+            try { if (maintenanceService != null) maintenanceService.save(); } catch (Exception ignored) {}
             if (apiClient != null) {
                 apiClient.shutdown();
             }
@@ -305,6 +369,9 @@ public class VelocityPteroPower {
 
     public void reload() {
         filteredLogger.info("Reloading VelocityPteroPower configuration...");
+
+        PanelType oldType = configurationManager.getPanelType();
+        String oldKey = configurationManager.getPterodactylApiKey();
 
         configurationManager.loadConfig();
         this.updateLoggerLevel();
@@ -332,12 +399,7 @@ public class VelocityPteroPower {
             }
         }
 
-        PanelType oldType =
-                (apiClient instanceof PelicanAPIClient)
-                        ? PanelType.pelican
-                        : (apiClient instanceof McServerSoftApiClient) ? PanelType.mcServerSoft : PanelType.pterodactyl;
         PanelType newType = configurationManager.getPanelType();
-        String oldKey = configurationManager.getPterodactylApiKey();
         String newKey = configurationManager.getPterodactylApiKey();
 
         if (apiClient == null || oldType != newType || !Objects.equals(oldKey, newKey)) {
@@ -391,6 +453,11 @@ public class VelocityPteroPower {
                 filteredLogger.debug("Detected Mc Server Soft Panel, creating api client...");
                 this.apiClient = new McServerSoftApiClient(this);
             }
+            case error -> {
+                logInvalidApplicationApiKeyError();
+                this.apiClient = null;
+                return;
+            }
             default -> {
                 filteredLogger.debug("No Panel type specified. Defaulting to pterodactyl Api Client...");
                 this.apiClient = new PterodactylAPIClient(this);
@@ -430,11 +497,26 @@ public class VelocityPteroPower {
         filteredLogger.error(" ");
         filteredLogger.error(" No valid API key found or configured in config.yml.");
         filteredLogger.error(" Please ensure 'pterodactyl.apiKey' is set correctly.");
-        filteredLogger.error(" Key should start with 'ptlc_' (Client) or 'plcn_' (Pelican).");
-        filteredLogger.error(" Application API keys ('ptla_') are NOT supported.");
+        filteredLogger.error(" Key should start with 'ptlc_' (Pterodactyl Client) or 'plcn_'/'pacc_' (Pelican Client).");
+        filteredLogger.error(" Application API keys ('ptla_'/'peli_') are NOT supported.");
         filteredLogger.error(" ");
         filteredLogger.error(" Plugin will be disabled.");
         filteredLogger.error("=================================================");
+    }
+
+    private void logInvalidApplicationApiKeyError() {
+        filteredLogger.error("=================================================");
+        filteredLogger.error(" VelocityPteroPower Initialization Failed!");
+        filteredLogger.error(" ");
+        filteredLogger.error(" Application API keys ('ptla_'/'peli_') are NOT supported.");
+        filteredLogger.error(" Please use a Client API key: 'ptlc_' (Pterodactyl) or 'plcn_'/'pacc_' (Pelican).");
+        filteredLogger.error(" ");
+        filteredLogger.error(" Plugin will be disabled.");
+        filteredLogger.error("=================================================");
+    }
+
+    public PlayerConnectionHandler getPlayerConnectionHandler() {
+        return playerConnectionHandler;
     }
 
     public ProxyServer getProxyServer() {
@@ -469,6 +551,26 @@ public class VelocityPteroPower {
         return rateLimitTracker;
     }
 
+    public de.tubyoub.velocitypteropower.util.PanelRequestScheduler getPanelRequestScheduler() {
+        return panelRequestScheduler;
+    }
+
+    public de.tubyoub.velocitypteropower.service.QueueProgressService getQueueProgressService() {
+        return queueProgressService;
+    }
+
+    public de.tubyoub.velocitypteropower.service.PersistentQueueService getPersistentQueueService() {
+        return persistentQueueService;
+    }
+
+    public de.tubyoub.velocitypteropower.service.MaintenanceService getMaintenanceService() {
+        return maintenanceService;
+    }
+
+    public de.tubyoub.velocitypteropower.service.ServerStateCache getServerStateCache() {
+        return serverStateCache;
+    }
+
     public ServerLifecycleManager getServerLifecycleManager() {
         return serverLifecycleManager;
     }
@@ -479,6 +581,10 @@ public class VelocityPteroPower {
 
     public Set<String> getStartingServers() {
         return startingServers;
+    }
+
+    public Map<String, Set<UUID>> getWaitingPlayers() {
+        return waitingPlayers;
     }
 
     public Map<UUID, Long> getPlayerCooldowns() {
@@ -535,8 +641,14 @@ public class VelocityPteroPower {
                         }
                         long since = startingServersSince.getOrDefault(name, now);
                         long maxWaitSeconds = configurationManager.getStartupInitialCheckDelay()
-                                + (12L * Math.max(5, info.getJoinDelay()))
+                                + configurationManager.resolveStartupTimeout(info)
                                 + 10L; // small buffer
+                        // Do not clear while players are still waiting
+                        if (waitingPlayers.containsKey(name)
+                                && waitingPlayers.get(name) != null
+                                && !waitingPlayers.get(name).isEmpty()) {
+                            continue;
+                        }
                         if (now - since > maxWaitSeconds * 1000L) {
                             filteredLogger.warn("Cleanup sweep: '{}' exceeded max startup window ({}s). Clearing stuck state.", name, maxWaitSeconds);
                             startingServers.remove(name);

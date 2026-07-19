@@ -146,6 +146,18 @@ public class PteroCommand implements SimpleCommand {
                 }
                 break;
 
+            case "queue":
+                showQueue(sender);
+                break;
+
+            case "maintenance":
+                if (sender.hasPermission("ptero.maintenance") || sender.hasPermission("ptero.reload")) {
+                    handleMaintenance(sender, args);
+                } else {
+                    sender.sendMessage(messages.prefixed(MessageKey.COMMAND_NO_PERMISSION));
+                }
+                break;
+
             case "apithreads":
                 if (sender.hasPermission("ptero.info")) {
                     showApiThreadsInfo(sender);
@@ -332,6 +344,13 @@ public class PteroCommand implements SimpleCommand {
         Map<String, PteroServerInfo> serverInfoMap = plugin.getServerInfoMap();
         if (serverInfoMap.containsKey(serverName)) {
             PteroServerInfo info = serverInfoMap.get(serverName);
+            if (plugin.getMaintenanceService() != null
+                    && plugin.getMaintenanceService().isServerInMaintenance(serverName)) {
+                sender.sendMessage(messages.prefixed(
+                        MessageKey.CONNECT_MAINTENANCE_BLOCKED,
+                        "detail", plugin.getMaintenanceService().detailFor(serverName)));
+                return;
+            }
             if (rateLimitTracker.canMakeRequest()) {
                 int maxOnline = configurationManager.getMaxOnlineServers();
                 boolean hasBypass = configurationManager.isMaxOnlineAllowBypass() && sender.hasPermission("ptero.maxcap.bypass");
@@ -355,7 +374,8 @@ public class PteroCommand implements SimpleCommand {
                     }
                     if (!exempt.contains(serverName)) {
                         int onlineCount = plugin.getServerLifecycleManager().countOnlineServersExcluding(exempt);
-                        if (onlineCount >= maxOnline && onlineCount != -1) {
+                        int effectiveCap = Math.max(0, maxOnline - configurationManager.getMaxOnlineReservations());
+                        if (onlineCount >= effectiveCap && onlineCount != -1) {
                             sender.sendMessage(messages.prefixed(MessageKey.CONNECT_MAX_ONLINE_REACHED, "max", String.valueOf(maxOnline)));
                             return;
                         }
@@ -843,6 +863,8 @@ public class PteroCommand implements SimpleCommand {
             if (sender.hasPermission("ptero.info")) subs.add("apithreads");
             if (sender.hasPermission("ptero.info")) subs.add("api");
             if (sender.hasPermission("ptero.history")) subs.add("history");
+            subs.add("queue");
+            if (sender.hasPermission("ptero.maintenance") || sender.hasPermission("ptero.reload")) subs.add("maintenance");
             if (sender.hasPermission("ptero.stopIdle")) subs.add("stopidle");
             if (sender.hasPermission("ptero.whitelistReload")) subs.add("whitelistReload");
             if (sender.hasPermission("ptero.reload")) subs.add("reload");
@@ -873,15 +895,28 @@ public class PteroCommand implements SimpleCommand {
         // Second argument suggestions (server names) or addon subcommands
         if (args.length == 2) {
             String sub = args[0].toLowerCase(Locale.ROOT);
-            boolean needsServer = sub.equals("start") || sub.equals("stop") || sub.equals("restart") || sub.equals("info");
+            boolean needsServer = sub.equals("start") || sub.equals("stop") || sub.equals("restart") || sub.equals("info") || sub.equals("maintenance");
             if (needsServer) {
                 if ((sub.equals("start") && !sender.hasPermission("ptero.start"))
                         || (sub.equals("stop") && !sender.hasPermission("ptero.stop"))
                         || (sub.equals("restart") && !sender.hasPermission("ptero.restart"))
-                        || (sub.equals("info") && !sender.hasPermission("ptero.info"))) {
+                        || (sub.equals("info") && !sender.hasPermission("ptero.info"))
+                        || (sub.equals("maintenance") && !(sender.hasPermission("ptero.maintenance") || sender.hasPermission("ptero.reload")))) {
                     return java.util.Collections.emptyList();
                 }
                 String prefix = args[1];
+                if (sub.equals("maintenance")) {
+                    List<String> opts = new ArrayList<>();
+                    opts.add("global");
+                    opts.add("on");
+                    opts.add("off");
+                    Map<String, PteroServerInfo> map = plugin.getServerInfoMap();
+                    if (map != null) opts.addAll(map.keySet());
+                    return opts.stream()
+                            .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(prefix.toLowerCase(Locale.ROOT)))
+                            .sorted(String.CASE_INSENSITIVE_ORDER)
+                            .collect(Collectors.toList());
+                }
                 Map<String, PteroServerInfo> map = plugin.getServerInfoMap();
                 if (map != null && !map.isEmpty()) {
                     return map.keySet().stream()
@@ -946,6 +981,8 @@ public class PteroCommand implements SimpleCommand {
         sender.sendMessage(Component.text("/ptero restart <serverName>"));
         sender.sendMessage(Component.text("/ptero list"));
         sender.sendMessage(Component.text("/ptero info <serverName>"));
+        sender.sendMessage(Component.text("/ptero queue"));
+        sender.sendMessage(Component.text("/ptero maintenance [server|global] <on|off>"));
         sender.sendMessage(Component.text("/ptero apithreads"));
         sender.sendMessage(Component.text("/ptero api"));
         sender.sendMessage(Component.text("/ptero history [playerName|uuid]"));
@@ -973,6 +1010,108 @@ public class PteroCommand implements SimpleCommand {
             }
         } catch (Throwable ignored) {}
         sender.sendMessage(Component.text("/ptero help"));
+    }
+
+    private void showQueue(CommandSource sender) {
+        var qps = plugin.getQueueProgressService();
+        Map<String, Set<UUID>> waiting = plugin.getWaitingPlayers();
+        boolean staff = sender.hasPermission("ptero.list") || sender.hasPermission("ptero.reload");
+
+        if (sender instanceof com.velocitypowered.api.proxy.Player player && !staff) {
+            if (qps == null) {
+                sender.sendMessage(messages.prefixed(MessageKey.CONNECT_QUEUE_EMPTY));
+                return;
+            }
+            var status = qps.findPlayerQueue(player.getUniqueId());
+            if (!status.present()) {
+                sender.sendMessage(messages.prefixed(MessageKey.CONNECT_QUEUE_EMPTY));
+                return;
+            }
+            sender.sendMessage(messages.prefixed(
+                    MessageKey.CONNECT_QUEUE_STATUS,
+                    "server", status.server(),
+                    "remaining", String.valueOf(status.remainingSeconds()),
+                    "position", String.valueOf(status.position()),
+                    "waiting", String.valueOf(status.waiting())));
+            return;
+        }
+
+        if (waiting == null || waiting.isEmpty()) {
+            sender.sendMessage(messages.prefixed(MessageKey.CONNECT_QUEUE_LIST_EMPTY));
+            return;
+        }
+        boolean any = false;
+        sender.sendMessage(messages.prefixed(MessageKey.CONNECT_QUEUE_LIST_HEADER));
+        var handler = plugin.getPlayerConnectionHandler();
+        for (Map.Entry<String, Set<UUID>> e : waiting.entrySet()) {
+            if (e.getValue() == null || e.getValue().isEmpty()) continue;
+            any = true;
+            long remaining = 0;
+            if (handler != null) {
+                Long deadline = handler.getStartupWatcherDeadlines().get(e.getKey());
+                if (deadline != null) {
+                    remaining = Math.max(0, (deadline - System.currentTimeMillis()) / 1000L);
+                }
+            }
+            sender.sendMessage(messages.prefixed(
+                    MessageKey.CONNECT_QUEUE_LIST_ENTRY,
+                    "server", e.getKey(),
+                    "waiting", String.valueOf(e.getValue().size()),
+                    "remaining", String.valueOf(remaining)));
+        }
+        if (!any) {
+            sender.sendMessage(messages.prefixed(MessageKey.CONNECT_QUEUE_LIST_EMPTY));
+        }
+    }
+
+    private void handleMaintenance(CommandSource sender, String[] args) {
+        var maint = plugin.getMaintenanceService();
+        if (maint == null) {
+            sender.sendMessage(messages.prefixed(MessageKey.GENERIC_ERROR, "message", "Maintenance service unavailable"));
+            return;
+        }
+        if (args.length < 2) {
+            sender.sendMessage(Component.text(
+                    "Maintenance: global=" + maint.isGlobal()
+                            + " servers=" + maint.getServers()));
+            sender.sendMessage(messages.prefixed(
+                    MessageKey.COMMAND_USAGE, "usage", "ptero maintenance [server|global] <on|off>"));
+            return;
+        }
+        if (args.length == 2) {
+            // /ptero maintenance on|off  → global
+            boolean on = args[1].equalsIgnoreCase("on") || args[1].equalsIgnoreCase("true");
+            boolean off = args[1].equalsIgnoreCase("off") || args[1].equalsIgnoreCase("false");
+            if (!on && !off) {
+                sender.sendMessage(messages.prefixed(
+                        MessageKey.COMMAND_USAGE, "usage", "ptero maintenance [server|global] <on|off>"));
+                return;
+            }
+            maint.setGlobal(on);
+            sender.sendMessage(messages.prefixed(
+                    MessageKey.GENERIC_SUCCESS,
+                    "message", "Global maintenance " + (on ? "enabled" : "disabled")));
+            return;
+        }
+        String target = args[1];
+        boolean on = args[2].equalsIgnoreCase("on") || args[2].equalsIgnoreCase("true");
+        boolean off = args[2].equalsIgnoreCase("off") || args[2].equalsIgnoreCase("false");
+        if (!on && !off) {
+            sender.sendMessage(messages.prefixed(
+                    MessageKey.COMMAND_USAGE, "usage", "ptero maintenance [server|global] <on|off>"));
+            return;
+        }
+        if (target.equalsIgnoreCase("global")) {
+            maint.setGlobal(on);
+            sender.sendMessage(messages.prefixed(
+                    MessageKey.GENERIC_SUCCESS,
+                    "message", "Global maintenance " + (on ? "enabled" : "disabled")));
+            return;
+        }
+        maint.setServer(target, on);
+        sender.sendMessage(messages.prefixed(
+                MessageKey.GENERIC_SUCCESS,
+                "message", "Maintenance for '" + target + "' " + (on ? "enabled" : "disabled")));
     }
 
     private void showApiInfo(CommandSource sender) {

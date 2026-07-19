@@ -3,57 +3,77 @@
  */
 package de.tubyoub.velocitypteropower.model;
 
+import de.tubyoub.velocitypteropower.manager.ConfigurationManager.ServerCheckMethod;
+
 /**
- * This class represents the server information for a Pterodactyl server.
- * It includes the server ID, timeout, and join delay.
+ * Server information for a managed panel server.
  */
-public  class PteroServerInfo {
+public class PteroServerInfo {
     private final String serverId;
     private final int timeout;
     private final int joinDelay;
     private final boolean whitelist;
+    private final Integer pollIntervalSeconds;
+    private final Integer startupTimeoutSeconds;
+    private final ServerCheckMethod checkMethodOverride;
+    private final String profileName;
 
-    /**
-     * Constructor for the PteroServerInfo class.
-     *
-     * @param serverId the ID of the server
-     * @param timeout the timeout for the server
-     * @param joinDelay the join delay for the server
-     */
     public PteroServerInfo(String serverId, int timeout, int joinDelay, boolean whitelist) {
+        this(serverId, timeout, joinDelay, whitelist, null, null, null, null);
+    }
+
+    public PteroServerInfo(
+            String serverId,
+            int timeout,
+            int joinDelay,
+            boolean whitelist,
+            Integer pollIntervalSeconds,
+            Integer startupTimeoutSeconds,
+            ServerCheckMethod checkMethodOverride,
+            String profileName) {
         this.serverId = serverId;
         this.timeout = timeout;
         this.joinDelay = joinDelay;
         this.whitelist = whitelist;
+        this.pollIntervalSeconds = pollIntervalSeconds;
+        this.startupTimeoutSeconds = startupTimeoutSeconds;
+        this.checkMethodOverride = checkMethodOverride;
+        this.profileName = profileName;
     }
 
-    /**
-     * This method returns the server ID.
-     *
-     * @return the server ID
-     */
     public String getServerId() {
         return serverId;
     }
 
-    /**
-     * This method returns the timeout for the server.
-     *
-     * @return the timeout for the server
-     */
     public int getTimeout() {
         return timeout;
     }
 
-    /**
-     * This method returns the join delay for the server.
-     *
-     * @return the join delay for the server
-     */
+    /** Post-online settle delay in seconds before auto-connecting players. */
     public int getJoinDelay() {
         return joinDelay;
     }
+
     public boolean isWhitelistEnabled() {
         return whitelist;
+    }
+
+    /** Per-server poll interval override, or null to use global default. */
+    public Integer getPollIntervalSeconds() {
+        return pollIntervalSeconds;
+    }
+
+    /** Per-server startup timeout override, or null to use global default. */
+    public Integer getStartupTimeoutSeconds() {
+        return startupTimeoutSeconds;
+    }
+
+    /** Per-server check method override, or null to use global default. */
+    public ServerCheckMethod getCheckMethodOverride() {
+        return checkMethodOverride;
+    }
+
+    public String getProfileName() {
+        return profileName;
     }
 }

@@ -33,7 +33,7 @@ jobs:
           SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
           VERSION="${POM_VERSION}-${SHORT_SHA}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "artifact=target/$(ls target/VelocityPteroPower-*-shaded.jar | head -n1)" >> "$GITHUB_OUTPUT"
+          echo "artifact=target/$(ls target/velocitypteropower-*-shaded.jar | head -n1)" >> "$GITHUB_OUTPUT"
 
       - name: Publish to Modrinth (beta)
         uses: WiIIiam278/mc-publish@hangar

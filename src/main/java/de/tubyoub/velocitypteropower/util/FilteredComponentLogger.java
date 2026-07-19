@@ -166,104 +166,91 @@ public class FilteredComponentLogger implements ComponentLogger {
     @Override
     public void debug(@NotNull Component msg) {
         if (isDebugEnabled()) {
-            Component debugPrefix = miniMessage.deserialize("<#00FFFF>[DEBUG] ");
-            delegate.info(Component.empty().append(debugPrefix).append(msg));
+            delegate.debug(msg);
         }
     }
     @Override
     public void debug(@NotNull Component format, @Nullable Object arg) {
         if (isDebugEnabled()) {
-            Component debugPrefix = miniMessage.deserialize("<#00FFFF>[DEBUG] ");
-            delegate.info(Component.empty().append(debugPrefix).append(format), arg);
+            delegate.debug(format, arg);
         }
     }
     @Override
     public void debug(@NotNull Component format, @Nullable Object arg1, @Nullable Object arg2) {
         if (isDebugEnabled()) {
-            Component debugPrefix = miniMessage.deserialize("<#00FFFF>[DEBUG] ");
-            delegate.info(Component.empty().append(debugPrefix).append(format), arg1, arg2);
+            delegate.debug(format, arg1, arg2);
         }
     }
     @Override
     public void debug(@NotNull Component format, @NotNull Object... arguments) {
         if (isDebugEnabled()) {
-            Component debugPrefix = miniMessage.deserialize("<#00FFFF>[DEBUG] ");
-            delegate.info(Component.empty().append(debugPrefix).append(format), arguments);
+            delegate.debug(format, arguments);
         }
     }
     @Override
     public void debug(@NotNull Component msg, @Nullable Throwable t) {
         if (isDebugEnabled()) {
-            Component debugPrefix = miniMessage.deserialize("<#00FFFF>[DEBUG] ");
-            delegate.info(Component.empty().append(debugPrefix).append(msg), t);
+            delegate.debug(msg, t);
         }
     }
     @Override
     public void debug(@NotNull Marker marker, String msg) {
         if (isDebugEnabled(marker)) {
-            delegate.info(miniMessage.deserialize("<#00FFFF>[DEBUG] " + msg));
+            delegate.debug(marker, msg);
         }
     }
     @Override
     public void debug(@NotNull Marker marker, String format, Object arg) {
         if (isDebugEnabled(marker)) {
-            String formattedMessage = MessageFormatter.format(format, arg).getMessage();
-            delegate.info(miniMessage.deserialize("<#00FFFF>[DEBUG] " + formattedMessage));
+            delegate.debug(marker, format, arg);
         }
     }
     @Override
     public void debug(@NotNull Marker marker, String format, Object arg1, Object arg2) {
         if (isDebugEnabled(marker)) {
-            String formattedMessage = MessageFormatter.format(format, arg1, arg2).getMessage();
-            delegate.info(miniMessage.deserialize("<#00FFFF>[DEBUG] " + formattedMessage));
+            delegate.debug(marker, format, arg1, arg2);
         }
     }
     @Override
     public void debug(@NotNull Marker marker, String format, Object... arguments) {
         if (isDebugEnabled(marker)) {
-            String formattedMessage = MessageFormatter.arrayFormat(format, arguments).getMessage();
-            delegate.info(miniMessage.deserialize("<#00FFFF>[DEBUG] " + formattedMessage));
+            delegate.debug(marker, format, arguments);
         }
     }
     @Override
     public void debug(@NotNull Marker marker, String msg, Throwable t) {
         if (isDebugEnabled(marker)) {
-            delegate.info(miniMessage.deserialize("<#00FFFF>[DEBUG] " + msg), t);
+            delegate.debug(marker, msg, t);
         }
     }
     @Override
     public void debug(@NotNull Marker marker, @NotNull Component msg) {
         if (isDebugEnabled(marker)) {
-            Component debugPrefix = miniMessage.deserialize("<#00FFFF>[DEBUG] ");
-            delegate.info(Component.empty().append(debugPrefix).append(msg));
+            delegate.debug(marker, msg);
         }
     }
     @Override
     public void debug(@NotNull Marker marker, @NotNull Component format, @Nullable Object arg) {
         if (isDebugEnabled(marker)) {
-            Component debugPrefix = miniMessage.deserialize("<#00FFFF>[DEBUG] ");
-            delegate.info(Component.empty().append(debugPrefix).append(format), arg);
+            delegate.debug(marker, format, arg);
         }
     }
     @Override
     public void debug(@NotNull Marker marker, @NotNull Component format, @Nullable Object arg1, @Nullable Object arg2) {
         if (isDebugEnabled(marker)) {
-           Component debugPrefix = miniMessage.deserialize("<#00FFFF>[DEBUG] ");
-            delegate.info(Component.empty().append(debugPrefix).append(format), arg1, arg2);
+            delegate.debug(marker, format, arg1, arg2);
         }
     }
     @Override
     public void debug(@NotNull Marker marker, @NotNull Component format, @NotNull Object... arguments) {
         if (isDebugEnabled(marker)) {
-            Component debugPrefix = miniMessage.deserialize("<#00FFFF>[DEBUG] ");
-            delegate.info(Component.empty().append(debugPrefix).append(format), arguments);
+            delegate.debug(marker, format, arguments);
         }
     }
     @Override
     public void debug(@NotNull Marker marker, @NotNull Component msg, @NotNull Throwable t) {
         if (isDebugEnabled(marker)) {
-            Component debugPrefix = miniMessage.deserialize("<#00FFFF>[DEBUG] ");
-            delegate.info(Component.empty().append(debugPrefix).append(msg), t);
+            delegate.debug(marker, msg, t);
         }
     }
 
@@ -516,38 +503,35 @@ public class FilteredComponentLogger implements ComponentLogger {
      @Override
     public void debug(String msg) {
         if (isDebugEnabled()) {
-            delegate.info(miniMessage.deserialize("<#00FFFF>[DEBUG] " + msg));
+            delegate.debug(msg);
         }
     }
 
     @Override
     public void debug(String format, Object arg) {
         if (isDebugEnabled()) {
-            String formattedMessage = MessageFormatter.format(format, arg).getMessage();
-            delegate.info(miniMessage.deserialize("<#00FFFF>[DEBUG] " + formattedMessage));
+            delegate.debug(format, arg);
         }
     }
 
     @Override
     public void debug(String format, Object arg1, Object arg2) {
         if (isDebugEnabled()) {
-            String formattedMessage = MessageFormatter.format(format, arg1, arg2).getMessage();
-            delegate.info(miniMessage.deserialize("<#00FFFF>[DEBUG] " + formattedMessage));
+            delegate.debug(format, arg1, arg2);
         }
     }
 
     @Override
     public void debug(String format, Object... arguments) {
         if (isDebugEnabled()) {
-            String formattedMessage = MessageFormatter.arrayFormat(format, arguments).getMessage();
-            delegate.info(miniMessage.deserialize("<#00FFFF>[DEBUG] " + formattedMessage));
+            delegate.debug(format, arguments);
         }
     }
 
     @Override
     public void debug(String msg, Throwable t) {
         if (isDebugEnabled()) {
-            delegate.info(miniMessage.deserialize("<#00FFFF>[DEBUG] " + msg), t);
+            delegate.debug(msg, t);
         }
     }
 

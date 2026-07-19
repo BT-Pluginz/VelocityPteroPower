@@ -4,7 +4,7 @@
 ################################
 
 # Version of the configuration file
-fileversion: 14
+fileversion: 15
 
 # Check for updates
 # If true, the plugin will check for updates on startup.
@@ -47,6 +47,8 @@ printRateLimit: false
 # "PANEL_API": Uses the Pterodactyl/Pelican panel API to check the server's state.
 #                    More accurate for actual server state ("running"), but uses API
 #                    requests and counts towards rate limits.
+# "HYBRID": Requires both panel "running" AND a successful Velocity ping before treating
+#           the server as ready (best for avoiding premature joins / kicks).
 # Default: "VELOCITY_PING"
 serverStatusCheckMethod: "VELOCITY_PING"
 
@@ -72,12 +74,70 @@ idleStartShutdownTime: 300
 playerStartCooldown: 10
 
 # How long (in seconds) the plugin should wait for the first check if the server is online
-# The joinDelay (configured for each server) is still applied when the server is online before a
-# player is automatically connected (so it doesn't affect this)
 # Maybe consider changing this to a lower value if you have for example a
 # limbo which is lightweight and starts fast
 # default: 10
 startupInitialCheckDelay: 10
+
+# How often (in seconds) to poll while waiting for a server to come online.
+# Independent of startupJoinDelay (which is the post-online settle delay).
+# default: 5
+startupPollInterval: 5
+
+# Maximum time (in seconds) to wait for a server to become online after a start signal.
+# default: 180
+startupTimeoutSeconds: 180
+
+# What to do when startupTimeoutSeconds elapses:
+# CANCEL         → clear waiters and starting state (default)
+# KEEP_STARTING  → clear player waiters but leave starting state so they can re-queue
+# default: CANCEL
+startupTimeoutPolicy: CANCEL
+
+# After an auto-connect transfer, if the backend kicks with SERVER_DISCONNECTED within this
+# many seconds, soft-requeue the player (settle again) instead of cancelling.
+# default: 30
+softRequeueGraceSeconds: 30
+
+# Max soft-requeue attempts after premature kicks during start-wait transfers.
+# default: 3
+softRequeueMaxAttempts: 3
+
+# Pause background prefetch when remaining API requests fall to this threshold (or waiters exist).
+# default: 5
+rateLimitBackgroundPauseThreshold: 5
+
+# If the panel never sends X-RateLimit-Reset, wait this many seconds before probing again when remaining is 0.
+# default: 60
+rateLimitProbeFallbackSeconds: 60
+
+# Persist start-wait queues to disk so players can resume after reconnect.
+# default: true
+persistentQueueEnabled: true
+
+# How long (seconds) a disconnected player's queue entry remains valid.
+# default: 900 (15 minutes)
+persistentQueueTtlSeconds: 900
+
+# Subscribe to Pterodactyl/Pelican Wings websockets for live server state (reduces polling).
+# default: true
+panelWebSocketEnabled: true
+
+# How often to (re)ensure websocket subscriptions for managed servers.
+# default: 120
+panelWebSocketRefreshSeconds: 120
+
+# TTL for cached live panel states from websocket (seconds).
+# default: 30
+serverStateCacheTtlSeconds: 30
+
+# Reserve this many online slots for always-online / limbo / lobby so player starts cannot fill the entire cap.
+# Only applies when maxOnlineServers > 0. default: 0
+maxOnlineReservations: 0
+
+# When max online is reached, queue the player for the target instead of hard-denying (start-on-join).
+# default: true
+queueWhenMaxOnline: true
 
 # Servers to ignore when the stopIdle command is used
 # THIS DOES NOT AFFECT forceStop
@@ -178,7 +238,7 @@ lobbyBalancer:
   # Order matters if lobbiesToUse is set; only the first N will be considered active.
   lobbies:
     - lobby
-    - hub
+    # - hub  # optional: add additional lobby servers here if configured under servers
 
   # Optional list of limbo servers to use while target servers are starting.
   limbos:
@@ -229,6 +289,14 @@ lobbyBalancer:
   # default = 120
   startFailureCooldownSeconds: 120
 
+  # Scale down empty extra lobbies back toward minOnline after they have been idle.
+  # default = true
+  scaleDownEnabled: true
+
+  # How long (seconds) an empty lobby above minOnline must stay empty before stop.
+  # default = 300
+  scaleDownIdleSeconds: 300
+
   # When a target server is starting, send players to a limbo (if available) and auto-queue them.
   # If false, players will stay on their current server (or be disconnected if coming from proxy) while queued.
   # default = false
@@ -271,10 +339,28 @@ servers:
 
     timeout: 30
 
-    # The time (in seconds) VPP should wait before automatically connecting a player after a server successfully started.
-    # For example when you have a plugin that needs a few seconds to fully load.... or smth else.
+    # The time (in seconds) VPP should wait AFTER the server is online before auto-connecting.
+# Useful when plugins need a few seconds to finish loading after ping/API reports ready.
     startupJoinDelay: 10
+
+    # Optional overrides (omit to use global defaults):
+    # startupPollInterval: 5
+    # startupTimeoutSeconds: 180
+    # serverStatusCheckMethod: HYBRID
+    # profile: survival
 
     # If VPP should fetch the whitelist of the Server and enforce it when a player trys to start a server
     # default: false
     whitelist: false
+
+# Optional named profiles — servers can set profile: <name> and override individual fields.
+# profiles:
+#   survival:
+#     startupJoinDelay: 15
+#     startupTimeoutSeconds: 300
+#     serverStatusCheckMethod: HYBRID
+#   limbo:
+#     startupJoinDelay: 0
+#     startupPollInterval: 3
+#     serverStatusCheckMethod: PANEL_API
+#     timeout: -1

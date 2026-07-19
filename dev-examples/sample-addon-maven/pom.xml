@@ -16,10 +16,10 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <maven.compiler.release>21</maven.compiler.release>
-        <velocity.api.version>3.4.0-SNAPSHOT</velocity.api.version>
+        <velocity.api.version>3.5.0-20260708.093050-39</velocity.api.version>
         <vpp.version>0.9.6</vpp.version>
         <!-- Path to the locally built API jar (when building inside this repo) -->
-        <vpp.local.api.jar>${project.basedir}/../../target/VelocityPteroPower-${vpp.version}-api.jar</vpp.local.api.jar>
+        <vpp.local.api.jar>${project.basedir}/../../target/velocitypteropower-${vpp.version}-api.jar</vpp.local.api.jar>
     </properties>
 
     <repositories>

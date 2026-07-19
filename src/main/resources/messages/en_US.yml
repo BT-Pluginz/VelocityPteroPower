@@ -1,5 +1,5 @@
 # VelocityPteroPower messages - English (US), MiniMessage
-fileversion: 2
+fileversion: 3
 
 # Use MiniMessage for styling. You can add gradients, hover, click, etc.
 # Example gradient prefix:
@@ -39,7 +39,16 @@ connect:
   error-rate-limited: "<red>Server startup is delayed due to API limits. Please wait or try again later.</red>"
   redirecting-to-limbo: "<gray>Server '<server>' is starting. Sending you to</gray> <aqua><limbo></aqua><gray>...</gray>"
   starting-server-disconnect: "<gray>Server '<server>' is starting up. Please try connecting again in a moment.</gray>"
-  start-timeout: "<red>Server '<server>' did not start in time.</red>"
+  start-timeout: "<red>Server '<server>' did not start within <seconds> seconds.</red>"
+  queue-cancelled: "<yellow>Auto-connect to '<server>' cancelled</yellow><gray> because you left the waiting area.</gray>"
+  queue-progress: "<gray>Starting</gray> <aqua><server></aqua><gray>…</gray> <yellow><remaining>s</yellow> <gray>left ·</gray> <yellow><waiting></yellow> <gray>waiting</gray>"
+  queue-status: "<gray>You are waiting for</gray> <aqua><server></aqua><gray>.</gray> <yellow><remaining>s</yellow> <gray>remaining · position</gray> <yellow><position></yellow><gray>/</gray><yellow><waiting></yellow>"
+  queue-empty: "<gray>You are not waiting for any server.</gray>"
+  queue-list-header: "<green>Startup queues:</green>"
+  queue-list-entry: "<gray>•</gray> <aqua><server></aqua><gray>:</gray> <yellow><waiting></yellow> <gray>waiting ·</gray> <yellow><remaining>s</yellow> <gray>left</gray>"
+  queue-list-empty: "<gray>No players are waiting for servers.</gray>"
+  capacity-queued: "<yellow>Server capacity reached.</yellow> <gray>Queued for</gray> <aqua><server></aqua><gray>…</gray>"
+  maintenance-blocked: "<red>Cannot start server.</red> <gray>Maintenance mode is active</gray><yellow><detail></yellow><gray>.</gray>"
   target-server-not-found: "<red>Target server '<server>' is not available.</red>"
   not-whitelisted: "<red>You are not whitelisted on this server.</red>"
   max-online-reached: "<red>Cannot start server.</red> <gray>Maximum number of online servers reached (</gray><yellow><max></yellow><gray>).</gray>" 

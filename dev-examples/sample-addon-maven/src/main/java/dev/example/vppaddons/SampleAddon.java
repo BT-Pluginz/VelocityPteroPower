@@ -239,7 +239,7 @@ public final class SampleAddon {
             logger.error("[VPP-SAMPLE] VPP API not available. Is VelocityPteroPower installed?");
             return;
         }
-        if (api.getApiVersion() != "1.0.1"){
+        if (!"1.0.0".equals(api.getApiVersion())) {
             logger.error("[VPP-SAMPLE] VPP API is on the wrong version. Is VelocityPteroPower up to date?");
             return;
         }

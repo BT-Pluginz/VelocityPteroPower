@@ -32,7 +32,13 @@ public class ConfigurationManager {
 
     public enum ServerCheckMethod {
         VELOCITY_PING,
-        PANEL_API
+        PANEL_API,
+        HYBRID
+    }
+
+    public enum StartupTimeoutPolicy {
+        CANCEL,
+        KEEP_STARTING
     }
 
     public enum ForcedHostOfflineBehavior {
@@ -59,6 +65,22 @@ public class ConfigurationManager {
     private int idleStartShutdownTime;
     private int playerCommandCooldown;
     private int startupInitialCheckDelay;
+    private int startupPollInterval;
+    private int startupTimeoutSeconds;
+    private StartupTimeoutPolicy startupTimeoutPolicy = StartupTimeoutPolicy.CANCEL;
+    private int softRequeueGraceSeconds;
+    private int softRequeueMaxAttempts;
+    private int rateLimitBackgroundPauseThreshold;
+    private int rateLimitProbeFallbackSeconds;
+    private int persistentQueueTtlSeconds;
+    private boolean persistentQueueEnabled;
+    private boolean panelWebSocketEnabled;
+    private int panelWebSocketRefreshSeconds;
+    private int serverStateCacheTtlSeconds;
+    private int maxOnlineReservations;
+    private boolean queueWhenMaxOnline;
+    private int balancerScaleDownIdleSeconds;
+    private boolean balancerScaleDownEnabled;
     private int whitelistCheckInterval;
     private ServerCheckMethod serverCheckMethod;
     private List<String> stopAllIgnoreList;
@@ -139,6 +161,8 @@ public class ConfigurationManager {
                                         .addIgnoredRoute("12", "servers", '.')
                                         .addIgnoredRoute("13", "servers", '.')
                                         .addIgnoredRoute("14", "servers", '.')
+                                        .addIgnoredRoute("15", "servers", '.')
+                                        .addIgnoredRoute("15", "profiles", '.')
                                         .build());
 
 
@@ -156,6 +180,26 @@ public class ConfigurationManager {
             idleStartShutdownTime = (int) config.get("idleStartShutdownTime", 300);
             playerCommandCooldown = (int) config.get("playerStartCooldown", 10);
             startupInitialCheckDelay = (int) config.get("startupInitialCheckDelay", 10);
+            startupPollInterval = (int) config.get("startupPollInterval", 5);
+            startupTimeoutSeconds = (int) config.get("startupTimeoutSeconds", 180);
+            softRequeueGraceSeconds = (int) config.get("softRequeueGraceSeconds", 30);
+            softRequeueMaxAttempts = (int) config.get("softRequeueMaxAttempts", 3);
+            rateLimitBackgroundPauseThreshold = (int) config.get("rateLimitBackgroundPauseThreshold", 5);
+            rateLimitProbeFallbackSeconds = (int) config.get("rateLimitProbeFallbackSeconds", 60);
+            persistentQueueEnabled = (boolean) config.get("persistentQueueEnabled", true);
+            persistentQueueTtlSeconds = (int) config.get("persistentQueueTtlSeconds", 900);
+            panelWebSocketEnabled = (boolean) config.get("panelWebSocketEnabled", true);
+            panelWebSocketRefreshSeconds = (int) config.get("panelWebSocketRefreshSeconds", 120);
+            serverStateCacheTtlSeconds = (int) config.get("serverStateCacheTtlSeconds", 30);
+            maxOnlineReservations = (int) config.get("maxOnlineReservations", 0);
+            queueWhenMaxOnline = (boolean) config.get("queueWhenMaxOnline", true);
+            String timeoutPolicyStr = config.getString("startupTimeoutPolicy", "CANCEL");
+            try {
+                startupTimeoutPolicy = StartupTimeoutPolicy.valueOf(timeoutPolicyStr.toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException e) {
+                logger.warn("Invalid startupTimeoutPolicy '{}'. Using CANCEL.", timeoutPolicyStr);
+                startupTimeoutPolicy = StartupTimeoutPolicy.CANCEL;
+            }
             whitelistCheckInterval = (int) config.get("whitelistCheckInterval", 10);
             maxOnlineServers = (int) config.get("maxOnlineServers", 0);
             maxOnlineAllowBypass = (boolean) config.get("maxOnlineAllowBypass", true);
@@ -208,6 +252,8 @@ public class ConfigurationManager {
                 balancerStartFailureFallbackSeconds = lb.getInt("startFailureFallbackSeconds", 60);
                 balancerStartFailureCooldownSeconds = lb.getInt("startFailureCooldownSeconds", 120);
                 sendToLimboOnStart = lb.getBoolean("sendToLimboOnStart", false);
+                balancerScaleDownEnabled = lb.getBoolean("scaleDownEnabled", true);
+                balancerScaleDownIdleSeconds = lb.getInt("scaleDownIdleSeconds", 300);
                 String fho = lb.getString("forcedHostOfflineBehavior", "DISCONNECT");
                 try {
                     forcedHostOfflineBehavior = ForcedHostOfflineBehavior.valueOf(fho.toUpperCase(Locale.ROOT));
@@ -232,6 +278,8 @@ public class ConfigurationManager {
                 balancerStartFailureFallbackSeconds = 60;
                 balancerStartFailureCooldownSeconds = 120;
                 sendToLimboOnStart = false;
+                balancerScaleDownEnabled = true;
+                balancerScaleDownIdleSeconds = 300;
                 forcedHostOfflineBehavior = ForcedHostOfflineBehavior.LOBBY_OR_LIMBO;
                 builtinLobbyBalancerEnabled = true;
             }
@@ -278,16 +326,24 @@ public class ConfigurationManager {
                 }
             }
             panelUrl = (String) pterodactyl.get("url");
-            if (!panelUrl.endsWith("/")) {
+            if (panelUrl != null && !panelUrl.endsWith("/")) {
                 panelUrl += "/";
             }
-            apiKey = (String) pterodactyl.get("apiKey");
+            Object apiKeyObj = pterodactyl.get("apiKey");
+            apiKey = coerceToString(apiKeyObj);
+            if (apiKeyObj != null && !(apiKeyObj instanceof String)) {
+                config.set("pterodactyl.apiKey", apiKey);
+                config.save();
+                logger.info("Coerced pterodactyl.apiKey to string and saved config (quote API keys in YAML).");
+            }
             panel = detectPanelType(apiKey);
 
 
             Section serversSection = config.getSection("servers");
                 if (serversSection != null) {
-                    serverInfoMap = processServerSection(serversSection);
+                    boolean reloading = this.serverInfoMap != null && !this.serverInfoMap.isEmpty();
+                    serverInfoMap = processServerSection(serversSection, reloading);
+                    validateBalancerEntries();
                 } else {
                     logger.error("Servers section not found in configuration.");
                 }
@@ -304,6 +360,10 @@ public class ConfigurationManager {
      * @return a map of server names to PteroServerInfo objects
      */
     public Map<String, PteroServerInfo> processServerSection(Section serversSection) {
+        return processServerSection(serversSection, false);
+    }
+
+    public Map<String, PteroServerInfo> processServerSection(Section serversSection, boolean reloading) {
             Map<String, PteroServerInfo> serverInfoMap = new HashMap<>();
             for (Object keyObj : serversSection.getKeys()) {
                 String key = String.valueOf(keyObj);
@@ -337,8 +397,62 @@ public class ConfigurationManager {
                             int timeout = serverInfoDataSection.getInt("timeout", -1);
                             int startupJoinDelay = serverInfoDataSection.getInt("startupJoinDelay", 10);
                             boolean whitelist = serverInfoDataSection.getBoolean("whitelist", false);
-                            serverInfoMap.put(key, new PteroServerInfo(id, timeout, startupJoinDelay, whitelist));
-                            logger.info("Registered Server: " + id + " successfully");
+                            Integer pollOverride = serverInfoDataSection.contains("startupPollInterval")
+                                    ? serverInfoDataSection.getInt("startupPollInterval")
+                                    : null;
+                            Integer timeoutOverride = serverInfoDataSection.contains("startupTimeoutSeconds")
+                                    ? serverInfoDataSection.getInt("startupTimeoutSeconds")
+                                    : null;
+                            ServerCheckMethod methodOverride = null;
+                            if (serverInfoDataSection.contains("serverStatusCheckMethod")) {
+                                try {
+                                    methodOverride = ServerCheckMethod.valueOf(
+                                            serverInfoDataSection.getString("serverStatusCheckMethod").toUpperCase(Locale.ROOT));
+                                } catch (Exception ignored) {}
+                            }
+                            String profile = serverInfoDataSection.contains("profile")
+                                    ? serverInfoDataSection.getString("profile")
+                                    : null;
+
+                            // Apply profile defaults when present (field overrides win)
+                            if (profile != null && !profile.isBlank() && config != null) {
+                                Section profiles = config.getSection("profiles");
+                                if (profiles != null) {
+                                    Section profileSec = profiles.getSection(profile);
+                                    if (profileSec != null) {
+                                        if (!serverInfoDataSection.contains("timeout") && profileSec.contains("timeout")) {
+                                            timeout = profileSec.getInt("timeout");
+                                        }
+                                        if (!serverInfoDataSection.contains("startupJoinDelay") && profileSec.contains("startupJoinDelay")) {
+                                            startupJoinDelay = profileSec.getInt("startupJoinDelay");
+                                        }
+                                        if (!serverInfoDataSection.contains("whitelist") && profileSec.contains("whitelist")) {
+                                            whitelist = profileSec.getBoolean("whitelist");
+                                        }
+                                        if (pollOverride == null && profileSec.contains("startupPollInterval")) {
+                                            pollOverride = profileSec.getInt("startupPollInterval");
+                                        }
+                                        if (timeoutOverride == null && profileSec.contains("startupTimeoutSeconds")) {
+                                            timeoutOverride = profileSec.getInt("startupTimeoutSeconds");
+                                        }
+                                        if (methodOverride == null && profileSec.contains("serverStatusCheckMethod")) {
+                                            try {
+                                                methodOverride = ServerCheckMethod.valueOf(
+                                                        profileSec.getString("serverStatusCheckMethod").toUpperCase(Locale.ROOT));
+                                            } catch (Exception ignored) {}
+                                        }
+                                    }
+                                }
+                            }
+
+                            serverInfoMap.put(key, new PteroServerInfo(
+                                    id, timeout, startupJoinDelay, whitelist,
+                                    pollOverride, timeoutOverride, methodOverride, profile));
+                            if (reloading) {
+                                logger.debug("Registered Server: {} successfully", id);
+                            } else {
+                                logger.info("Registered Server: " + id + " successfully");
+                            }
                         }
                     } catch (Exception e) {
                         logger.warn("Error processing server '" + key + "': " + e.getMessage());
@@ -347,6 +461,42 @@ public class ConfigurationManager {
             }
             return serverInfoMap;
         }
+
+    private String coerceToString(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof String s) {
+            return s.trim();
+        }
+        return String.valueOf(value).trim();
+    }
+
+    private void validateBalancerEntries() {
+        if (serverInfoMap == null) {
+            return;
+        }
+        java.util.Set<String> managed = serverInfoMap.keySet();
+        validateBalancerList(balancerLobbies, "lobbies", managed);
+        validateBalancerList(balancerLimbos, "limbos", managed);
+    }
+
+    private void validateBalancerList(List<String> entries, String section, java.util.Set<String> managed) {
+        if (entries == null) {
+            return;
+        }
+        for (String name : entries) {
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            if (!managed.contains(name)) {
+                logger.warn(
+                    "lobbyBalancer.{} entry '{}' is not configured under servers (no panel id). It will be ignored.",
+                    section,
+                    name);
+            }
+        }
+    }
 
     private PanelType detectPanelType(String apiKey) {
         if (apiKey == null || apiKey.isEmpty()) {
@@ -482,6 +632,94 @@ public class ConfigurationManager {
 
     public  int getStartupInitialCheckDelay(){
         return startupInitialCheckDelay;
+    }
+
+    public int getStartupPollInterval() {
+        return Math.max(1, startupPollInterval);
+    }
+
+    public int getStartupTimeoutSeconds() {
+        return Math.max(30, startupTimeoutSeconds);
+    }
+
+    public StartupTimeoutPolicy getStartupTimeoutPolicy() {
+        return startupTimeoutPolicy == null ? StartupTimeoutPolicy.CANCEL : startupTimeoutPolicy;
+    }
+
+    public int getSoftRequeueGraceSeconds() {
+        return Math.max(0, softRequeueGraceSeconds);
+    }
+
+    public int getSoftRequeueMaxAttempts() {
+        return Math.max(0, softRequeueMaxAttempts);
+    }
+
+    public int getRateLimitBackgroundPauseThreshold() {
+        return Math.max(0, rateLimitBackgroundPauseThreshold);
+    }
+
+    public int getRateLimitProbeFallbackSeconds() {
+        return Math.max(10, rateLimitProbeFallbackSeconds);
+    }
+
+    public boolean isPersistentQueueEnabled() {
+        return persistentQueueEnabled;
+    }
+
+    public int getPersistentQueueTtlSeconds() {
+        return Math.max(60, persistentQueueTtlSeconds);
+    }
+
+    public boolean isPanelWebSocketEnabled() {
+        return panelWebSocketEnabled;
+    }
+
+    public int getPanelWebSocketRefreshSeconds() {
+        return Math.max(30, panelWebSocketRefreshSeconds);
+    }
+
+    public int getServerStateCacheTtlSeconds() {
+        return Math.max(5, serverStateCacheTtlSeconds);
+    }
+
+    public int getMaxOnlineReservations() {
+        return Math.max(0, maxOnlineReservations);
+    }
+
+    public boolean isQueueWhenMaxOnline() {
+        return queueWhenMaxOnline;
+    }
+
+    public boolean isBalancerScaleDownEnabled() {
+        return balancerScaleDownEnabled;
+    }
+
+    public int getBalancerScaleDownIdleSeconds() {
+        return Math.max(30, balancerScaleDownIdleSeconds);
+    }
+
+    /** Effective poll interval for a server (per-server override or global). */
+    public int resolvePollInterval(PteroServerInfo info) {
+        if (info != null && info.getPollIntervalSeconds() != null) {
+            return Math.max(1, info.getPollIntervalSeconds());
+        }
+        return getStartupPollInterval();
+    }
+
+    /** Effective startup timeout for a server (per-server override or global). */
+    public int resolveStartupTimeout(PteroServerInfo info) {
+        if (info != null && info.getStartupTimeoutSeconds() != null) {
+            return Math.max(30, info.getStartupTimeoutSeconds());
+        }
+        return getStartupTimeoutSeconds();
+    }
+
+    /** Effective check method for a server (per-server override or global). */
+    public ServerCheckMethod resolveCheckMethod(PteroServerInfo info) {
+        if (info != null && info.getCheckMethodOverride() != null) {
+            return info.getCheckMethodOverride();
+        }
+        return getServerCheckMethod();
     }
 
     public int getWhitelistCheckInterval(){

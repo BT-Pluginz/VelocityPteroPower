@@ -137,31 +137,8 @@ public class McServerSoftApiClient extends AbstractPanelAPIClient {
     }
 
      /**
-     * Checks if a server is online using the configured method (Velocity Ping or Pterodactyl API).
-     *
-     * @param serverName The name of the server as registered in Velocity.
-     * @param serverId   The Pterodactyl server identifier (UUID).
-     * @return {@code true} if the server is considered online, {@code false} otherwise.
+     * Online checks use {@link AbstractPanelAPIClient#isServerOnline(String, String)}.
      */
-    @Override
-    public boolean isServerOnline(String serverName, String serverId) {
-        ConfigurationManager.ServerCheckMethod method =
-            configurationManager.getServerCheckMethod();
-
-        switch (method) {
-            case VELOCITY_PING:
-                return checkOnlineViaVelocityPing(serverName);
-            case PANEL_API:
-                return checkOnlineViaPanelApi(serverName, serverId);
-            default:
-               // Should not happen with enum, but just in case
-                logger.error(
-                    "Unknown ServerCheckMethod: {}. Defaulting to false.",
-                    method
-                );
-                return false;
-        }
-    }
 
     /**
      * Checks server status by querying the Pterodactyl API /resources endpoint.
@@ -301,7 +278,7 @@ public class McServerSoftApiClient extends AbstractPanelAPIClient {
     @Override
     public CompletableFuture<String> fetchWhitelistFile(String serverId) {
         logger.warn("MC Server Soft does not Support whitelist fetching");
-        return null;
+        return CompletableFuture.completedFuture("[]");
     }
     public boolean isApiKeyValid(String apiKey) {
         try {

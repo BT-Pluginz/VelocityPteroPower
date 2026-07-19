@@ -94,6 +94,13 @@ public class ServerLifecycleManager {
               // Clear tracking and any displayed deadline when the scheduled check fires
               scheduledShutdowns.remove(serverName);
               plugin.getShutdownDeadlines().remove(serverName);
+              if (plugin.getPlayerConnectionHandler() != null
+                  && !plugin.getPlayerConnectionHandler().isSafeToIdleStop(serverName)) {
+                logger.info(
+                    "Shutdown task for '{}' skipped — players are waiting for this server.",
+                    serverName);
+                return;
+              }
               // Check emptiness and rate limit before sending stop
               boolean empty = apiClient.isServerEmpty(serverName);
               if (rateLimitTracker.canMakeRequest() && empty) {
@@ -171,6 +178,11 @@ public class ServerLifecycleManager {
     }
 
     if (apiClient.isServerEmpty(serverName)) {
+      if (plugin.getPlayerConnectionHandler() != null
+          && !plugin.getPlayerConnectionHandler().isSafeToIdleStop(serverName)) {
+        logger.debug("Server '{}' is empty but has waiters. Skipping idle shutdown.", serverName);
+        return;
+      }
       logger.debug("Server '{}' is empty. Scheduling shutdown.", serverName);
       ScheduledTask shutdownTask = scheduleServerShutdown(serverName, serverInfo.getServerId(), serverInfo.getTimeout());
       if (shutdownTask != null) {
@@ -196,50 +208,62 @@ public class ServerLifecycleManager {
         .getScheduler()
         .buildTask(
             plugin,
-            () -> {
-              if (!rateLimitTracker.canMakeRequest()) {
-                logger.warn("Could not confirm shutdown status for {} due to rate limit.", serverName);
-                return;
-              }
+            new Runnable() {
+              @Override
+              public void run() {
+                if (!rateLimitTracker.canMakeRequest()) {
+                  logger.debug("Could not confirm shutdown status for {} due to rate limit. Rescheduling.", serverName);
+                  reschedule();
+                  return;
+                }
 
-              if (apiClient.isServerOnline(serverName, serverId)) {
-                int currentRetries = shutdownRetryCounts.getOrDefault(serverName, 0);
-                int maxRetries = configurationManager.getShutdownRetries();
+                if (apiClient.isServerOnline(serverName, serverId)) {
+                  int currentRetries = shutdownRetryCounts.getOrDefault(serverName, 0);
+                  int maxRetries = configurationManager.getShutdownRetries();
 
-                if (currentRetries < maxRetries) {
-                  // Check emptiness again before retrying stop
-                  if (apiClient.isServerEmpty(serverName)) {
-                    int nextRetry = currentRetries + 1;
-                    shutdownRetryCounts.put(serverName, nextRetry);
+                  if (currentRetries < maxRetries) {
+                    // Check emptiness again before retrying stop
+                    if (apiClient.isServerEmpty(serverName)) {
+                      int nextRetry = currentRetries + 1;
+                      shutdownRetryCounts.put(serverName, nextRetry);
 
-                    logger.warn(
-                        messages.mm(
-                            MessageKey.SERVER_STILL_ONLINE_RETRYING,
-                            Map.of(
-                                "server", serverName,
-                                "retry", String.valueOf(nextRetry),
-                                "maxretries", String.valueOf(maxRetries))));
+                      logger.warn(
+                          messages.mm(
+                              MessageKey.SERVER_STILL_ONLINE_RETRYING,
+                              Map.of(
+                                  "server", serverName,
+                                  "retry", String.valueOf(nextRetry),
+                                  "maxretries", String.valueOf(maxRetries))));
 
-                    apiClient.powerServer(serverId, PowerSignal.STOP);
-                    scheduleShutdownConfirmationCheck(serverName, serverId);
+                      apiClient.powerServer(serverId, PowerSignal.STOP);
+                      scheduleShutdownConfirmationCheck(serverName, serverId);
+                    } else {
+                      // Players came back — cancel shutdown process
+                      logger.info(
+                          messages.mm(MessageKey.SERVER_SHUTDOWN_CANCELLED_PLAYERS, Map.of("server", serverName)));
+                      shutdownRetryCounts.remove(serverName);
+                    }
                   } else {
-                    // Players came back — cancel shutdown process
-                    logger.info(
-                        messages.mm(MessageKey.SERVER_SHUTDOWN_CANCELLED_PLAYERS, Map.of("server", serverName)));
+                    // Max retries reached
+                    logger.error(
+                        messages.mm(
+                            MessageKey.SERVER_SHUTDOWN_FAILED,
+                            Map.of("server", serverName, "retry", String.valueOf(maxRetries))));
                     shutdownRetryCounts.remove(serverName);
                   }
                 } else {
-                  // Max retries reached
-                  logger.error(
-                      messages.mm(
-                          MessageKey.SERVER_SHUTDOWN_FAILED,
-                          Map.of("server", serverName, "retry", String.valueOf(maxRetries))));
+                  // Server is offline, shutdown successful
+                  logger.info(messages.mm(MessageKey.SERVER_SHUTDOWN_SUCCESS, Map.of("server", serverName)));
                   shutdownRetryCounts.remove(serverName);
                 }
-              } else {
-                // Server is offline, shutdown successful
-                logger.info(messages.mm(MessageKey.SERVER_SHUTDOWN_SUCCESS, Map.of("server", serverName)));
-                shutdownRetryCounts.remove(serverName);
+              }
+
+              private void reschedule() {
+                proxyServer
+                    .getScheduler()
+                    .buildTask(plugin, this)
+                    .delay(retryDelay, TimeUnit.SECONDS)
+                    .schedule();
               }
             })
         .delay(retryDelay, TimeUnit.SECONDS)
@@ -296,12 +320,17 @@ public class ServerLifecycleManager {
               online = false;
             }
             if (!online) {
-              logger.debug("Idle sweep: '{}' is offline or unknown. Skipping scheduling.");
+              logger.debug("Idle sweep: '{}' is offline or unknown. Skipping scheduling.", name);
               plugin.getShutdownDeadlines().remove(name);
               continue;
             }
 
             if (apiClient.isServerEmpty(name)) {
+              if (plugin.getPlayerConnectionHandler() != null
+                  && !plugin.getPlayerConnectionHandler().isSafeToIdleStop(name)) {
+                logger.debug("Idle sweep: '{}' has waiters — skipping shutdown schedule.", name);
+                continue;
+              }
               logger.debug("[DEBUG] Idle sweep: scheduling shutdown for '{}' (timeout={}s)", name, timeout);
               ScheduledTask t = scheduleServerShutdown(name, info.getServerId(), timeout);
               if (t != null) {
@@ -355,7 +384,7 @@ public class ServerLifecycleManager {
     int interval = configurationManager.getAlwaysOnlineCheckInterval();
     var keepOnline = configurationManager.getAlwaysOnlineList();
     if (interval <= 0 || keepOnline == null || keepOnline.isEmpty()) {
-      logger.debug("Always-online maintenance disabled or no servers configured.");
+      logger.debug("Always-online keeper disabled or no servers configured.");
       return;
     }
 
@@ -376,6 +405,11 @@ public class ServerLifecycleManager {
               String id = info.getServerId();
               boolean online = apiClient.isServerOnline(name, id);
               if (!online) {
+                if (plugin.getMaintenanceService() != null
+                    && plugin.getMaintenanceService().isServerInMaintenance(name)) {
+                  logger.debug("Always-online keeper: '{}' skipped (maintenance mode).", name);
+                  continue;
+                }
                 logger.info(messages.mm(MessageKey.POWER_ACTION_SENT, Map.of("action", "start", "server", name)));
                 apiClient.powerServer(id, PowerSignal.START);
                 plugin.recordServerStartSignalSent();
@@ -396,6 +430,6 @@ public class ServerLifecycleManager {
 
     // schedule first run
     proxyServer.getScheduler().buildTask(plugin, task).delay(interval, TimeUnit.SECONDS).schedule();
-    logger.info("Scheduled always-online maintenance every {} seconds for {} server(s).", interval, keepOnline.size());
+    logger.info("Scheduled always-online keeper every {} seconds for {} server(s).", interval, keepOnline.size());
   }
 }

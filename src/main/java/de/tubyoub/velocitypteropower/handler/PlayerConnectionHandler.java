@@ -4,7 +4,6 @@ import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
-import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.ConnectionRequestBuilder;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import de.tubyoub.velocitypteropower.VelocityPteroPower;
@@ -23,16 +22,36 @@ import de.tubyoub.vpp.api.event.PlayerPreConnectEvent;
 import de.tubyoub.vpp.api.event.PlayerPreServerSwitchEvent;
 import de.tubyoub.vpp.api.routing.PlayerRouteContext;
 
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 public class PlayerConnectionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(PlayerConnectionHandler.class);
-    private final ProxyServer proxyServer;
+  private static final int MAX_CONNECT_RETRIES = 5;
+  private static final long CONNECT_RETRY_DELAY_SECONDS = 2;
+
+  private static final class PendingConnect {
+    final String serverName;
+    int retryCount;
+    volatile boolean cancelled;
+    final long transferStartedAt;
+    int softRequeueCount;
+    final boolean fromStartupWait;
+
+    PendingConnect(String serverName, boolean fromStartupWait) {
+      this.serverName = serverName;
+      this.fromStartupWait = fromStartupWait;
+      this.transferStartedAt = System.currentTimeMillis();
+    }
+  }
+
+  private final ProxyServer proxyServer;
   private final VelocityPteroPower plugin;
   private final ComponentLogger logger;
   private final ConfigurationManager configurationManager;
@@ -42,8 +61,13 @@ public class PlayerConnectionHandler {
 
   private final Map<String, PteroServerInfo> serverInfoMap;
   private final Set<String> startingServers;
+  private final Map<String, Set<UUID>> waitingPlayers;
   private final Map<UUID, Long> playerCooldowns;
   private final Map<String, UUID> startInitiators;
+  private final Map<UUID, PendingConnect> pendingConnects = new ConcurrentHashMap<>();
+  private final Set<String> activeStartupWatchers = ConcurrentHashMap.newKeySet();
+  private final Map<String, Long> startupWatcherDeadlines = new ConcurrentHashMap<>();
+  private final Set<String> settlingServers = ConcurrentHashMap.newKeySet();
 
   public PlayerConnectionHandler(ProxyServer proxyServer, VelocityPteroPower plugin) {
     this.proxyServer = proxyServer;
@@ -55,8 +79,72 @@ public class PlayerConnectionHandler {
     this.rateLimitTracker = plugin.getRateLimitTracker();
     this.serverInfoMap = plugin.getServerInfoMap();
     this.startingServers = plugin.getStartingServers();
+    this.waitingPlayers = plugin.getWaitingPlayers();
     this.playerCooldowns = plugin.getPlayerCooldowns();
     this.startInitiators = plugin.getStartInitiators();
+  }
+
+  /**
+   * True if players are queued waiting for this server, or a startup watcher/settle is active.
+   */
+  public boolean hasActiveWaiters(String serverName) {
+    Set<UUID> waiting = waitingPlayers.get(serverName);
+    if (waiting != null && !waiting.isEmpty()) {
+      return true;
+    }
+    return activeStartupWatchers.contains(serverName) || settlingServers.contains(serverName);
+  }
+
+  /** Idle-stop is unsafe while waiters/watchers exist for the target. */
+  public boolean isSafeToIdleStop(String serverName) {
+    return !hasActiveWaiters(serverName);
+  }
+
+  public Map<String, Long> getStartupWatcherDeadlines() {
+    return startupWatcherDeadlines;
+  }
+
+  public Set<String> getActiveStartupWatchers() {
+    return activeStartupWatchers;
+  }
+
+  /**
+   * Cancels any pending connect retries and removes the player from waiting lists.
+   * Called on player disconnect.
+   */
+  public void cancelPendingConnect(UUID playerId) {
+    PendingConnect pending = pendingConnects.remove(playerId);
+    if (pending != null) {
+      pending.cancelled = true;
+    }
+    for (Map.Entry<String, Set<UUID>> entry : waitingPlayers.entrySet()) {
+      Set<UUID> waiting = entry.getValue();
+      if (waiting.remove(playerId)) {
+        clearStartingStateIfEmpty(entry.getKey());
+      }
+    }
+    // Keep persistent queue entry so reconnect can resume (cleared on success / TTL)
+  }
+
+  /** Resume a persisted wait after reconnect, if any. */
+  public void tryResumePersistentQueue(Player player) {
+    if (!configurationManager.isPersistentQueueEnabled() || plugin.getPersistentQueueService() == null) {
+      return;
+    }
+    var entry = plugin.getPersistentQueueService().get(player.getUniqueId());
+    if (entry == null || entry.targetServer == null) {
+      return;
+    }
+    PteroServerInfo info = serverInfoMap.get(entry.targetServer);
+    if (info == null) {
+      plugin.getPersistentQueueService().clear(player.getUniqueId());
+      return;
+    }
+    logger.info(
+        "Resuming persistent queue for {} → {}",
+        player.getUsername(),
+        entry.targetServer);
+    scheduleDelayedConnect(player, entry.targetServer, info);
   }
 
   @Subscribe(priority = 10)
@@ -266,6 +354,16 @@ public class PlayerConnectionHandler {
       return;
     }
 
+    if (plugin.getMaintenanceService() != null
+        && plugin.getMaintenanceService().isServerInMaintenance(serverName)) {
+      player.sendMessage(
+          messagesManager.prefixed(
+              MessageKey.CONNECT_MAINTENANCE_BLOCKED,
+              "detail", plugin.getMaintenanceService().detailFor(serverName)));
+      event.setResult(ServerPreConnectEvent.ServerResult.denied());
+      return;
+    }
+
     // Enforce maximum concurrent online servers (excluding exempt), unless bypassed
     int maxOnline = configurationManager.getMaxOnlineServers();
     boolean hasBypass = configurationManager.isMaxOnlineAllowBypass() && player.hasPermission("ptero.maxcap.bypass");
@@ -289,7 +387,16 @@ public class PlayerConnectionHandler {
       }
       if (!exempt.contains(serverName)) {
         int onlineCount = plugin.getServerLifecycleManager().countOnlineServersExcluding(exempt);
-        if (onlineCount >= maxOnline && onlineCount != -1) {
+        int effectiveCap = Math.max(0, maxOnline - configurationManager.getMaxOnlineReservations());
+        if (onlineCount >= effectiveCap && onlineCount != -1) {
+          if (configurationManager.isQueueWhenMaxOnline()) {
+            player.sendMessage(
+                messagesManager.prefixed(
+                    MessageKey.CONNECT_CAPACITY_QUEUED, "server", serverName));
+            event.setResult(ServerPreConnectEvent.ServerResult.denied());
+            scheduleDelayedConnect(player, serverName, serverInfo);
+            return;
+          }
           player.sendMessage(
               messagesManager.prefixed(
                   MessageKey.CONNECT_MAX_ONLINE_REACHED,
@@ -422,90 +529,296 @@ public class PlayerConnectionHandler {
 
   private void scheduleDelayedConnect(
     Player player, String targetServerName, PteroServerInfo targetServerInfo) {
-    Optional<ServerConnection> initialConnection = player.getCurrentServer();
+    waitingPlayers
+        .computeIfAbsent(targetServerName, k -> ConcurrentHashMap.newKeySet())
+        .add(player.getUniqueId());
+    if (configurationManager.isPersistentQueueEnabled() && plugin.getPersistentQueueService() != null) {
+      plugin.getPersistentQueueService().remember(player.getUniqueId(), targetServerName);
+    }
+    ensureServerStartupWatcher(targetServerName, targetServerInfo);
+  }
+
+  private void ensureServerStartupWatcher(String targetServerName, PteroServerInfo targetServerInfo) {
+    if (!activeStartupWatchers.add(targetServerName)) {
+      return;
+    }
+
     long initialDelay = configurationManager.getStartupInitialCheckDelay();
-    long checkInterval = Math.max(5, targetServerInfo.getJoinDelay());
+    long checkInterval = configurationManager.resolvePollInterval(targetServerInfo);
+    long settleSeconds = Math.max(0, targetServerInfo.getJoinDelay());
+    long timeoutSeconds = configurationManager.resolveStartupTimeout(targetServerInfo);
+    long deadlineMs = System.currentTimeMillis() + (initialDelay + timeoutSeconds) * 1000L;
+    startupWatcherDeadlines.put(targetServerName, deadlineMs);
 
     proxyServer
         .getScheduler()
         .buildTask(
             plugin,
             new Runnable() {
-              private int attempts = 0;
-              private final int maxAttempts = 12;
-
               @Override
               public void run() {
-                // Abort only if the player moved to a non-holding, non-target server while waiting
-                if (initialConnection.isPresent()) {
-                  String currentName = player.getCurrentServer()
-                      .map(cs -> cs.getServer().getServerInfo().getName())
-                      .orElse("");
-
-                  java.util.Set<String> limbos = new java.util.HashSet<>(configurationManager.getBalancerLimbos());
-                  java.util.Set<String> lobbies = new java.util.HashSet<>(configurationManager.getBalancerLobbies());
-
-                  boolean onHolding = limbos.contains(currentName) || lobbies.contains(currentName);
-                  boolean onTarget = currentName.equalsIgnoreCase(targetServerName);
-                  boolean sameAsInitial = initialConnection.equals(player.getCurrentServer());
-
-                  if (!onHolding && !onTarget && !sameAsInitial) {
-                    logger.info("Player {} moved to '{}' while waiting for '{}'. Not a lobby/limbo/target — cancelling their auto-connect.",
-                        player.getUsername(), currentName, targetServerName);
-                    return; // Do NOT clear global starting markers here — this is a per-player cancellation only
-                  }
-                }
-                if (!player.isActive() || player.getCurrentServer().isEmpty()) {
-                  logger.info(
-                      "Player {} disconnected or left limbo while waiting for {}. Cancelling connect task.",
-                      player.getUsername(),
-                      targetServerName);
-                  startingServers.remove(targetServerName);
-                  plugin.getStartingServersSince().remove(targetServerName);
-                  startInitiators.remove(targetServerName);
+                Set<UUID> waiting = waitingPlayers.get(targetServerName);
+                if (waiting == null || waiting.isEmpty()) {
+                  activeStartupWatchers.remove(targetServerName);
+                  startupWatcherDeadlines.remove(targetServerName);
+                  settlingServers.remove(targetServerName);
                   return;
+                }
+
+                pruneInactiveWaiters(targetServerName, waiting);
+                if (waiting.isEmpty()) {
+                  activeStartupWatchers.remove(targetServerName);
+                  startupWatcherDeadlines.remove(targetServerName);
+                  settlingServers.remove(targetServerName);
+                  clearStartingStateIfEmpty(targetServerName);
+                  return;
+                }
+
+                if (System.currentTimeMillis() >= deadlineMs) {
+                  handleStartupTimeout(targetServerName, waiting);
+                  return;
+                }
+
+                // Capacity-queued: try to send START once a slot is available
+                if (!startingServers.contains(targetServerName)
+                    && !apiClient.isServerOnline(targetServerName, targetServerInfo.getServerId())) {
+                  if (tryStartWhenCapacityAllows(targetServerName, targetServerInfo)) {
+                    logger.info(
+                        "Capacity slot freed — starting '{}' for {} waiter(s).",
+                        targetServerName,
+                        waiting.size());
+                  }
                 }
 
                 if (apiClient.isServerOnline(targetServerName, targetServerInfo.getServerId())) {
                   logger.info(
-                      "Server {} is now online. Attempting to connect player {}.",
+                      "Server {} is now online. Settling {}s before connecting {} waiting player(s).",
                       targetServerName,
-                      player.getUsername());
-                  connectPlayerToServer(player, targetServerName);
-                } else {
-                  attempts++;
-                  if (attempts >= maxAttempts) {
-                    logger.error(
-                        "Server {} did not come online within the expected time for player {}. Cancelling connect task.",
+                      settleSeconds,
+                      waiting.size());
+                  settlingServers.add(targetServerName);
+                  Runnable connectAll = () -> {
+                    settlingServers.remove(targetServerName);
+                    Set<UUID> stillWaiting = waitingPlayers.get(targetServerName);
+                    if (stillWaiting == null || stillWaiting.isEmpty()) {
+                      activeStartupWatchers.remove(targetServerName);
+                      startupWatcherDeadlines.remove(targetServerName);
+                      return;
+                    }
+                    // Re-verify after settle
+                    if (!apiClient.isServerOnline(targetServerName, targetServerInfo.getServerId())) {
+                      logger.info(
+                          "Server {} failed re-verify after settle. Resuming poll.",
+                          targetServerName);
+                      activeStartupWatchers.remove(targetServerName);
+                      ensureServerStartupWatcher(targetServerName, targetServerInfo);
+                      return;
+                    }
+                    logger.info(
+                        "Server {} ready after settle. Connecting {} waiting player(s).",
                         targetServerName,
-                        player.getUsername());
-                    player.sendMessage(
-                        messagesManager.prefixed(
-                            MessageKey.CONNECT_START_TIMEOUT, "server", targetServerName));
-                    startingServers.remove(targetServerName);
-                    plugin.getStartingServersSince().remove(targetServerName);
-                    startInitiators.remove(targetServerName);
+                        stillWaiting.size());
+                    for (UUID playerId : new HashSet<>(stillWaiting)) {
+                      proxyServer.getPlayer(playerId).ifPresent(p ->
+                          connectPlayerToServer(p, targetServerName, true));
+                    }
+                    activeStartupWatchers.remove(targetServerName);
+                    startupWatcherDeadlines.remove(targetServerName);
+                  };
+                  if (settleSeconds <= 0) {
+                    connectAll.run();
                   } else {
-                    logger.debug(
-                        "Server {} not online yet for player {}. Rescheduling check (Attempt {}/{}).",
-                        targetServerName,
-                        player.getUsername(),
-                        attempts,
-                        maxAttempts);
                     proxyServer
                         .getScheduler()
-                        .buildTask(plugin, this)
-                        .delay(checkInterval, java.util.concurrent.TimeUnit.SECONDS)
+                        .buildTask(plugin, connectAll)
+                        .delay(settleSeconds, TimeUnit.SECONDS)
                         .schedule();
                   }
+                  return;
                 }
+
+                long remaining = Math.max(0, (deadlineMs - System.currentTimeMillis()) / 1000L);
+                logger.debug(
+                    "Server {} not online yet. Rescheduling shared check ({}s remaining).",
+                    targetServerName,
+                    remaining);
+                proxyServer
+                    .getScheduler()
+                    .buildTask(plugin, this)
+                    .delay(checkInterval, TimeUnit.SECONDS)
+                    .schedule();
               }
             })
         .delay(initialDelay, TimeUnit.SECONDS)
         .schedule();
   }
 
+  private void handleStartupTimeout(String targetServerName, Set<UUID> waiting) {
+    logger.error(
+        "Server {} did not come online within the expected time. Cancelling connect tasks for {} player(s).",
+        targetServerName,
+        waiting.size());
+    long timeoutSec = configurationManager.resolveStartupTimeout(serverInfoMap.get(targetServerName));
+    for (UUID playerId : new HashSet<>(waiting)) {
+      proxyServer
+          .getPlayer(playerId)
+          .ifPresent(
+              p ->
+                  p.sendMessage(
+                      messagesManager.prefixed(
+                          MessageKey.CONNECT_START_TIMEOUT,
+                          "server", targetServerName,
+                          "seconds", String.valueOf(timeoutSec))));
+      pendingConnects.remove(playerId);
+    }
+    waiting.clear();
+    activeStartupWatchers.remove(targetServerName);
+    startupWatcherDeadlines.remove(targetServerName);
+    settlingServers.remove(targetServerName);
+    if (configurationManager.getStartupTimeoutPolicy()
+        == ConfigurationManager.StartupTimeoutPolicy.KEEP_STARTING) {
+      waitingPlayers.remove(targetServerName);
+      // leave startingServers so players can re-queue without a full cold start
+    } else {
+      clearStartingStateIfEmpty(targetServerName);
+    }
+  }
+
+  private boolean tryStartWhenCapacityAllows(String serverName, PteroServerInfo serverInfo) {
+    if (plugin.getMaintenanceService() != null
+        && plugin.getMaintenanceService().isServerInMaintenance(serverName)) {
+      return false;
+    }
+    if (!rateLimitTracker.canMakeRequest()) {
+      return false;
+    }
+    int maxOnline = configurationManager.getMaxOnlineServers();
+    if (maxOnline > 0) {
+      java.util.Set<String> exempt = new java.util.HashSet<>(configurationManager.getMaxOnlineExemptList());
+      if (!configurationManager.isCountLobbiesInMaxOnline()) {
+        java.util.List<String> lobbies = configurationManager.getBalancerLobbies();
+        int use = Math.max(0, configurationManager.getBalancerLobbiesToUse());
+        if (lobbies != null && !lobbies.isEmpty()) {
+          if (use > 0 && use < lobbies.size()) exempt.addAll(lobbies.subList(0, use));
+          else exempt.addAll(lobbies);
+        }
+      }
+      if (!configurationManager.isCountLimbosInMaxOnline()) {
+        java.util.List<String> limbos = configurationManager.getBalancerLimbos();
+        if (limbos != null) exempt.addAll(limbos);
+      }
+      if (!exempt.contains(serverName)) {
+        int onlineCount = plugin.getServerLifecycleManager().countOnlineServersExcluding(exempt);
+        int effectiveCap = Math.max(0, maxOnline - configurationManager.getMaxOnlineReservations());
+        if (onlineCount >= effectiveCap && onlineCount != -1) {
+          return false;
+        }
+      }
+    }
+    if (!startingServers.add(serverName)) {
+      return false;
+    }
+    plugin.getStartingServersSince().put(serverName, System.currentTimeMillis());
+    apiClient.powerServer(serverInfo.getServerId(), PowerSignal.START);
+    plugin.recordServerStartSignalSent();
+    scheduleInitialIdleCheck(serverName, serverInfo.getServerId());
+    return true;
+  }
+
+  private void pruneInactiveWaiters(String targetServerName, Set<UUID> waiting) {
+    for (UUID playerId : new HashSet<>(waiting)) {
+      Optional<Player> playerOpt = proxyServer.getPlayer(playerId);
+      if (playerOpt.isEmpty()) {
+        waiting.remove(playerId);
+        pendingConnects.remove(playerId);
+        continue;
+      }
+      Player player = playerOpt.get();
+      if (!player.isActive() || player.getCurrentServer().isEmpty()) {
+        logger.info(
+            "Player {} disconnected or left limbo while waiting for {}. Cancelling connect task.",
+            player.getUsername(),
+            targetServerName);
+        waiting.remove(playerId);
+        pendingConnects.remove(playerId);
+        try {
+          player.sendMessage(
+              messagesManager.prefixed(
+                  MessageKey.CONNECT_QUEUE_CANCELLED, "server", targetServerName));
+        } catch (Exception ignored) {}
+        continue;
+      }
+      String currentName =
+          player.getCurrentServer().map(cs -> cs.getServer().getServerInfo().getName()).orElse("");
+      java.util.Set<String> limbos = new java.util.HashSet<>(configurationManager.getBalancerLimbos());
+      java.util.Set<String> lobbies = new java.util.HashSet<>(configurationManager.getBalancerLobbies());
+      boolean onHolding = limbos.contains(currentName) || lobbies.contains(currentName);
+      boolean onTarget = currentName.equalsIgnoreCase(targetServerName);
+      if (!onHolding && !onTarget) {
+        logger.info(
+            "Player {} moved to '{}' while waiting for '{}'. Not a lobby/limbo/target — cancelling their auto-connect.",
+            player.getUsername(),
+            currentName,
+            targetServerName);
+        waiting.remove(playerId);
+        pendingConnects.remove(playerId);
+        player.sendMessage(
+            messagesManager.prefixed(
+                MessageKey.CONNECT_QUEUE_CANCELLED, "server", targetServerName));
+      }
+    }
+    if (waiting.isEmpty()) {
+      clearStartingStateIfEmpty(targetServerName);
+    }
+  }
+
+  private void clearStartingStateIfEmpty(String serverName) {
+    Set<UUID> waiting = waitingPlayers.get(serverName);
+    if (waiting != null && !waiting.isEmpty()) {
+      return;
+    }
+    waitingPlayers.remove(serverName);
+    startingServers.remove(serverName);
+    plugin.getStartingServersSince().remove(serverName);
+    startInitiators.remove(serverName);
+  }
+
+  private void removeWaitingPlayer(UUID playerId, String serverName) {
+    Set<UUID> waiting = waitingPlayers.get(serverName);
+    if (waiting != null) {
+      waiting.remove(playerId);
+    }
+    clearStartingStateIfEmpty(serverName);
+    if (plugin.getPersistentQueueService() != null) {
+      plugin.getPersistentQueueService().clear(playerId);
+    }
+  }
+
   private void connectPlayerToServer(Player player, String serverName) {
+    connectPlayerToServer(player, serverName, false);
+  }
+
+  private void connectPlayerToServer(Player player, String serverName, boolean fromStartupWait) {
+    if (!player.isActive()) {
+      cancelPendingConnect(player.getUniqueId());
+      return;
+    }
+
+    PendingConnect pending =
+        pendingConnects.compute(
+            player.getUniqueId(),
+            (id, existing) -> {
+              if (existing != null
+                  && !existing.cancelled
+                  && existing.serverName.equals(serverName)) {
+                return existing;
+              }
+              return new PendingConnect(serverName, fromStartupWait);
+            });
+    if (pending.cancelled || !pending.serverName.equals(serverName)) {
+      return;
+    }
+
     Optional<RegisteredServer> serverOpt = proxyServer.getServer(serverName);
 
     if (serverOpt.isEmpty()) {
@@ -516,9 +829,8 @@ public class PlayerConnectionHandler {
       player.sendMessage(
           messagesManager.prefixed(
               MessageKey.CONNECT_TARGET_SERVER_NOT_FOUND, "server", serverName));
-      startingServers.remove(serverName);
-      plugin.getStartingServersSince().remove(serverName);
-      startInitiators.remove(serverName);
+      pendingConnects.remove(player.getUniqueId());
+      removeWaitingPlayer(player.getUniqueId(), serverName);
       return;
     }
 
@@ -529,47 +841,153 @@ public class PlayerConnectionHandler {
         .map(cs -> cs.getServer().equals(targetServer))
         .orElse(false)) {
       logger.debug("Player {} is already connected to {}. No action needed.", player.getUsername(), serverName);
-      startingServers.remove(serverName);
-      plugin.getStartingServersSince().remove(serverName);
-      startInitiators.remove(serverName);
+      pendingConnects.remove(player.getUniqueId());
+      removeWaitingPlayer(player.getUniqueId(), serverName);
       return;
     }
 
-    // Clear starting markers BEFORE attempting connection to avoid being re-routed to limbo by pre-connect
-    startingServers.remove(serverName);
-    plugin.getStartingServersSince().remove(serverName);
-    startInitiators.remove(serverName);
-
     logger.info("Connecting player {} to server {}.", player.getUsername(), serverName);
     player.createConnectionRequest(targetServer).connect().whenComplete((result, throwable) -> {
+      if (!player.isActive()) {
+        cancelPendingConnect(player.getUniqueId());
+        return;
+      }
+
+      PendingConnect current = pendingConnects.get(player.getUniqueId());
+      if (current == null || current.cancelled) {
+        return;
+      }
+
       if (throwable != null) {
-        logger.debug("Connect failed for {} to {}: {}", player.getUsername(), serverName, throwable.toString());
-        // Retry once after a short delay
-        proxyServer.getScheduler().buildTask(plugin, () -> connectPlayerToServer(player, serverName))
-            .delay(2, java.util.concurrent.TimeUnit.SECONDS)
-            .schedule();
+        scheduleConnectRetry(player, serverName, current, "exception: " + throwable);
         return;
       }
       if (result == null) {
-        logger.debug("Connect returned null result for {} to {} — retrying shortly.", player.getUsername(), serverName);
-        proxyServer.getScheduler().buildTask(plugin, () -> connectPlayerToServer(player, serverName))
-            .delay(2, java.util.concurrent.TimeUnit.SECONDS)
-            .schedule();
+        scheduleConnectRetry(player, serverName, current, "null result");
         return;
       }
+
       ConnectionRequestBuilder.Status status = result.getStatus();
       switch (status) {
-        case SUCCESS -> logger.info("{} moved to {}", player.getUsername(), serverName);
-        case ALREADY_CONNECTED -> logger.debug("{} was already on {}", player.getUsername(), serverName);
+        case SUCCESS -> {
+          logger.info("{} moved to {}", player.getUsername(), serverName);
+          pendingConnects.remove(player.getUniqueId());
+          removeWaitingPlayer(player.getUniqueId(), serverName);
+        }
+        case ALREADY_CONNECTED -> {
+          logger.debug("{} was already on {}", player.getUsername(), serverName);
+          pendingConnects.remove(player.getUniqueId());
+          removeWaitingPlayer(player.getUniqueId(), serverName);
+        }
+        case SERVER_DISCONNECTED -> {
+          if (trySoftRequeueAfterPrematureKick(player, serverName, current)) {
+            return;
+          }
+          logger.debug(
+              "Connect status for {} to {} was SERVER_DISCONNECTED — not retrying (backend message preserved).",
+              player.getUsername(),
+              serverName);
+          pendingConnects.remove(player.getUniqueId());
+          removeWaitingPlayer(player.getUniqueId(), serverName);
+        }
+        case CONNECTION_IN_PROGRESS -> scheduleConnectRetry(player, serverName, current, status.name());
         default -> {
-          // If denied or cancelled by event logic, retry once shortly
-          logger.debug("Connect status for {} to {} was {} — retrying shortly.", player.getUsername(), serverName, status);
-          proxyServer.getScheduler().buildTask(plugin, () -> connectPlayerToServer(player, serverName))
-              .delay(2, java.util.concurrent.TimeUnit.SECONDS)
-              .schedule();
+          logger.debug(
+              "Connect status for {} to {} was {} — not retrying.",
+              player.getUsername(),
+              serverName,
+              status);
+          pendingConnects.remove(player.getUniqueId());
+          removeWaitingPlayer(player.getUniqueId(), serverName);
         }
       }
     });
+  }
+
+  private boolean trySoftRequeueAfterPrematureKick(Player player, String serverName, PendingConnect pending) {
+    if (!pending.fromStartupWait) {
+      return false;
+    }
+    int grace = configurationManager.getSoftRequeueGraceSeconds();
+    int maxSoft = configurationManager.getSoftRequeueMaxAttempts();
+    if (grace <= 0 || maxSoft <= 0) {
+      return false;
+    }
+    long ageMs = System.currentTimeMillis() - pending.transferStartedAt;
+    if (ageMs > grace * 1000L) {
+      return false;
+    }
+    if (pending.softRequeueCount >= maxSoft) {
+      return false;
+    }
+    PteroServerInfo info = serverInfoMap.get(serverName);
+    if (info == null) {
+      return false;
+    }
+    pending.softRequeueCount++;
+    pendingConnects.remove(player.getUniqueId());
+    logger.info(
+        "Soft-requeueing {} for {} after premature SERVER_DISCONNECTED ({}/{}).",
+        player.getUsername(),
+        serverName,
+        pending.softRequeueCount,
+        maxSoft);
+    player.sendMessage(
+        messagesManager.prefixed(
+            MessageKey.CONNECT_SERVER_STARTING, "server", serverName));
+    waitingPlayers
+        .computeIfAbsent(serverName, k -> ConcurrentHashMap.newKeySet())
+        .add(player.getUniqueId());
+    settlingServers.add(serverName);
+    long settle = Math.max(2, info.getJoinDelay());
+    proxyServer
+        .getScheduler()
+        .buildTask(plugin, () -> {
+          settlingServers.remove(serverName);
+          if (!player.isActive()) {
+            return;
+          }
+          ensureServerStartupWatcher(serverName, info);
+          // If already online, watcher will settle/connect; also nudge if watcher already ended
+          if (!activeStartupWatchers.contains(serverName)
+              && apiClient.isServerOnline(serverName, info.getServerId())) {
+            connectPlayerToServer(player, serverName, true);
+          }
+        })
+        .delay(settle, TimeUnit.SECONDS)
+        .schedule();
+    return true;
+  }
+
+  private void scheduleConnectRetry(Player player, String serverName, PendingConnect pending, String reason) {
+    if (!player.isActive()) {
+      cancelPendingConnect(player.getUniqueId());
+      return;
+    }
+    pending.retryCount++;
+    if (pending.retryCount > MAX_CONNECT_RETRIES) {
+      logger.warn(
+          "Connect to {} for {} failed after {} attempts ({}). Giving up.",
+          serverName,
+          player.getUsername(),
+          MAX_CONNECT_RETRIES,
+          reason);
+      pendingConnects.remove(player.getUniqueId());
+      removeWaitingPlayer(player.getUniqueId(), serverName);
+      return;
+    }
+    logger.debug(
+        "Connect failed for {} to {} ({}). Retrying shortly ({}/{}).",
+        player.getUsername(),
+        serverName,
+        reason,
+        pending.retryCount,
+        MAX_CONNECT_RETRIES);
+    proxyServer
+        .getScheduler()
+        .buildTask(plugin, () -> connectPlayerToServer(player, serverName, pending.fromStartupWait))
+        .delay(CONNECT_RETRY_DELAY_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+        .schedule();
   }
 
   private void scheduleInitialIdleCheck(String serverName, String serverId) {
@@ -585,8 +1003,16 @@ public class PlayerConnectionHandler {
             new Runnable() {
               @Override
               public void run() {
-                if (!startingServers.contains(serverName)) {
+                if (!startingServers.contains(serverName) && !hasActiveWaiters(serverName)) {
                   logger.debug("Initial idle check for {}: Cancelled (server no longer starting).", serverName);
+                  return;
+                }
+
+                if (!isSafeToIdleStop(serverName)) {
+                  logger.debug(
+                      "Initial idle check for {}: Waiters/watcher active. Rescheduling.",
+                      serverName);
+                  reschedule();
                   return;
                 }
 
@@ -598,15 +1024,17 @@ public class PlayerConnectionHandler {
 
                 boolean online = apiClient.isServerOnline(serverName, serverId);
                 if (online) {
-                  if (apiClient.isServerEmpty(serverName)) {
+                  if (apiClient.isServerEmpty(serverName) && isSafeToIdleStop(serverName)) {
                     logger.info(
                         messagesManager.raw(MessageKey.SERVER_IDLE_SHUTDOWN)
                             .replace("<server>", serverName));
                     apiClient.powerServer(serverId, PowerSignal.STOP);
                     startingServers.remove(serverName);
-                  } else {
+                  } else if (!apiClient.isServerEmpty(serverName)) {
                     logger.debug("Initial idle check for {}: Players present. Cancelling idle shutdown task.", serverName);
                     startingServers.remove(serverName);
+                  } else {
+                    reschedule();
                   }
                 } else {
                   logger.debug("Initial idle check for {}: Server not online yet. Rescheduling.", serverName);

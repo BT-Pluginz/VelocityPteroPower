@@ -1,5 +1,5 @@
 # VelocityPteroPower Nachrichten - Deutsch (DE), MiniMessage
-fileversion: 2
+fileversion: 3
 
 # Use MiniMessage for styling. You can add gradients, hover, click, etc.
 # Example gradient prefix:
@@ -39,7 +39,16 @@ connect:
   error-rate-limited: "<red>Serverstart verzögert sich aufgrund von API-Limits. Bitte warte oder versuche es später erneut.</red>"
   redirecting-to-limbo: "<gray>Server '<server>' startet. Du wirst zu</gray> <aqua><limbo></aqua> <gray>gesendet...</gray>"
   starting-server-disconnect: "<gray>Server '<server>' startet. Bitte versuche es in einem Moment erneut.</gray>"
-  start-timeout: "<red>Server '<server>' ist nicht rechtzeitig gestartet.</red>"
+  start-timeout: "<red>Server '<server>' ist nicht innerhalb von <seconds> Sekunden gestartet.</red>"
+  queue-cancelled: "<yellow>Auto-Connect zu '<server>' abgebrochen</yellow><gray>, weil du den Wartebereich verlassen hast.</gray>"
+  queue-progress: "<gray>Starte</gray> <aqua><server></aqua><gray>…</gray> <yellow><remaining>s</yellow> <gray>übrig ·</gray> <yellow><waiting></yellow> <gray>wartend</gray>"
+  queue-status: "<gray>Du wartest auf</gray> <aqua><server></aqua><gray>.</gray> <yellow><remaining>s</yellow> <gray>übrig · Position</gray> <yellow><position></yellow><gray>/</gray><yellow><waiting></yellow>"
+  queue-empty: "<gray>Du wartest auf keinen Server.</gray>"
+  queue-list-header: "<green>Start-Warteschlangen:</green>"
+  queue-list-entry: "<gray>•</gray> <aqua><server></aqua><gray>:</gray> <yellow><waiting></yellow> <gray>wartend ·</gray> <yellow><remaining>s</yellow> <gray>übrig</gray>"
+  queue-list-empty: "<gray>Keine Spieler warten auf Server.</gray>"
+  capacity-queued: "<yellow>Server-Kapazität erreicht.</yellow> <gray>Eingereiht für</gray> <aqua><server></aqua><gray>…</gray>"
+  maintenance-blocked: "<red>Server kann nicht gestartet werden.</red> <gray>Wartungsmodus aktiv</gray><yellow><detail></yellow><gray>.</gray>"
   target-server-not-found: "<red>Zielserver '<server>' ist nicht verfügbar.</red>"
   not-whitelisted: "<red>Du bist auf diesem Server nicht auf der Whitelist.</red>"
   max-online-reached: "<red>Server kann nicht gestartet werden.</red> <gray>Maximale Anzahl gleichzeitig laufender Server erreicht (</gray><yellow><max></yellow><gray>).</gray>"

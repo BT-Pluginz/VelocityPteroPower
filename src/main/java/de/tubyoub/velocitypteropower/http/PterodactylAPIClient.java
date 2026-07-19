@@ -259,6 +259,7 @@ public class PterodactylAPIClient extends AbstractPanelAPIClient {
             );
             return;
         }
+        rateLimitTracker.consumeOne();
         try {
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(configurationManager.getPterodactylUrl() + "api/client/servers/" + serverId + "/power"))
@@ -270,37 +271,15 @@ public class PterodactylAPIClient extends AbstractPanelAPIClient {
 
             rateLimitTracker.updateRateLimitInfo(httpClient.send(request, HttpResponse.BodyHandlers.ofString()));
         } catch (Exception e) {
+            rateLimitTracker.restoreOne();
             logger.error("Error powering server.", e);
         }
     }
 
 
     /**
-     * Checks if a server is online using the configured method (Velocity Ping or Pterodactyl API).
-     *
-     * @param serverName The name of the server as registered in Velocity.
-     * @param serverId   The Pterodactyl server identifier (UUID).
-     * @return {@code true} if the server is considered online, {@code false} otherwise.
+     * Online checks use {@link AbstractPanelAPIClient#isServerOnline(String, String)}.
      */
-    @Override
-    public boolean isServerOnline(String serverName, String serverId) {
-        ConfigurationManager.ServerCheckMethod method =
-            configurationManager.getServerCheckMethod();
-
-        switch (method) {
-            case VELOCITY_PING:
-                return checkOnlineViaVelocityPing(serverName);
-            case PANEL_API:
-                return checkOnlineViaPanelApi(serverName, serverId);
-            default:
-               // Should not happen with enum, but just in case
-                logger.error(
-                    "Unknown ServerCheckMethod: {}. Defaulting to false.",
-                    method
-                );
-                return false;
-        }
-    }
 
     /**
      * Checks server status by querying the Pterodactyl API /resources endpoint.
@@ -485,7 +464,7 @@ public class PterodactylAPIClient extends AbstractPanelAPIClient {
     }
     public boolean isApiKeyValid(String apiKey) {
             if (!rateLimitTracker.canMakeRequest()) {
-            logger.warn("Rate limit reached. Cannot check if ApiKey is valid}.");
+            logger.warn("Rate limit reached. Cannot validate API key right now.");
             return false;
         }
         try {
@@ -498,14 +477,18 @@ public class PterodactylAPIClient extends AbstractPanelAPIClient {
                 .build();
             HttpResponse response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             rateLimitTracker.updateRateLimitInfo(response);
-            if (response.statusCode() == 401 || response.statusCode() == 403) {
-                logger.debug("Checking for valid ApiKey returned 401/403");
+            int status = response.statusCode();
+            if (status == 401 || status == 403) {
+                logger.debug("API key validation failed: authentication rejected (HTTP {}).", status);
                 return false;
-            }else {
+            }
+            if (status >= 500) {
+                logger.warn("API key validation inconclusive: panel returned HTTP {} (server error).", status);
                 return true;
             }
+            return true;
         } catch (Exception e) {
-            logger.error("Error checking for valid ApiKey server.", e);
+            logger.warn("API key validation inconclusive: could not reach panel ({}).", e.getMessage());
         }
         return false;
     }

@@ -34,6 +34,13 @@ public class ServerSwitchListener {
   @Subscribe
   public void onDisconnect(DisconnectEvent event) {
     Player player = event.getPlayer();
+    // Cancel any pending auto-connect retries for this player
+    try {
+      if (plugin.getPlayerConnectionHandler() != null) {
+        plugin.getPlayerConnectionHandler().cancelPendingConnect(player.getUniqueId());
+      }
+    } catch (Exception ignored) {}
+
     // Cleanup limbo record on disconnect
     try { var lts = plugin.getLimboTrackerService(); if (lts != null) lts.clearForPlayer(player.getUniqueId(), "disconnect"); } catch (Exception ignored) {}
 
@@ -108,6 +115,20 @@ public class ServerSwitchListener {
     } catch (Exception ignored) {}
 
     serverLifecycleManager.cancelScheduledShutdown(newServerName, "player " + event.getPlayer().getUsername() + " joined");
+
+    // Resume persistent start-wait when landing on lobby/limbo after reconnect
+    try {
+      var cfg = plugin.getConfigurationManager();
+      var pch = plugin.getPlayerConnectionHandler();
+      if (cfg != null && pch != null) {
+        boolean onHolding =
+            (cfg.getBalancerLimbos() != null && cfg.getBalancerLimbos().contains(newServerName))
+                || (cfg.getBalancerLobbies() != null && cfg.getBalancerLobbies().contains(newServerName));
+        if (onHolding) {
+          pch.tryResumePersistentQueue(event.getPlayer());
+        }
+      }
+    } catch (Exception ignored) {}
 
     event
         .getPreviousServer()
