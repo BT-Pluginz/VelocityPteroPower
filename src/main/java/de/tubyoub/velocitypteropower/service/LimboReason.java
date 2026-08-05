@@ -15,6 +15,11 @@ public enum LimboReason {
     SELF_MOVE,
 
     /**
+     * The player's requested server is under maintenance; waiting for it to be lifted.
+     */
+    MAINTENANCE_WAIT,
+
+    /**
      * Any other plugin/external reason.
      */
     OTHER

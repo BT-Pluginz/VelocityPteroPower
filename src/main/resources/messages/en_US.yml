@@ -42,7 +42,9 @@ connect:
   start-timeout: "<red>Server '<server>' did not start in time.</red>"
   target-server-not-found: "<red>Target server '<server>' is not available.</red>"
   not-whitelisted: "<red>You are not whitelisted on this server.</red>"
-  max-online-reached: "<red>Cannot start server.</red> <gray>Maximum number of online servers reached (</gray><yellow><max></yellow><gray>).</gray>" 
+  max-online-reached: "<red>Cannot start server.</red> <gray>Maximum number of online servers reached (</gray><yellow><max></yellow><gray>).</gray>"
+  server-maintenance: "<red>Server '<server>' is under maintenance.</red>"
+  maintenance-redirect: "<gray>Server '<server>' is under maintenance. Sending you to</gray> <aqua><limbo></aqua><gray>...</gray>"
 
 server:
   starting: "<gray>Server is starting...</gray>"

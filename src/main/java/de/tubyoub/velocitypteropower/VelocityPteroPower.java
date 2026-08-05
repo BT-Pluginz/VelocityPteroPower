@@ -126,7 +126,6 @@ public class VelocityPteroPower {
         }
 
         this.serverLifecycleManager = new ServerLifecycleManager(proxyServer, this);
-        MaintenanceHook.init(proxyServer, filteredLogger);
         this.playerConnectionHandler = new PlayerConnectionHandler(proxyServer, this);
         this.serverSwitchListener = new ServerSwitchListener(this, serverLifecycleManager);
         // Initialize and start lobby/limbo balancer
@@ -207,6 +206,7 @@ public class VelocityPteroPower {
                 commandManager.metaBuilder("ptero").aliases("vpp").build(), new PteroCommand(this));
         proxyServer.getEventManager().register(this, playerConnectionHandler);
         proxyServer.getEventManager().register(this, serverSwitchListener);
+        MaintenanceHook.init(this, proxyServer, filteredLogger);
 
         // Initialize bStats metrics and register custom charts
         this.metrics = metricsFactory.make(this, BSTATS_PLUGIN_ID);

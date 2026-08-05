@@ -45,6 +45,8 @@ public enum MessageKey {
     CONNECT_TARGET_SERVER_NOT_FOUND("connect.target-server-not-found"),
     CONNECT_NOT_WHITELISTED("connect.not-whitelisted"),
     CONNECT_MAX_ONLINE_REACHED("connect.max-online-reached"),
+    CONNECT_SERVER_MAINTENANCE("connect.server-maintenance"),
+    CONNECT_MAINTENANCE_REDIRECT("connect.maintenance-redirect"),
 
     // Server lifecycle
     SERVER_STARTING("server.starting"),
