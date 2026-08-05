@@ -3,13 +3,16 @@ package de.tubyoub.velocitypteropower.listener;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.player.ServerConnectedEvent;
+import com.velocitypowered.api.event.player.ServerPostConnectEvent;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import de.tubyoub.velocitypteropower.VelocityPteroPower;
+import de.tubyoub.velocitypteropower.hooks.MaintenanceHook;
 import de.tubyoub.velocitypteropower.lifecycle.ServerLifecycleManager;
 import de.tubyoub.velocitypteropower.manager.MessageKey;
 import de.tubyoub.velocitypteropower.manager.MessagesManager;
 import de.tubyoub.velocitypteropower.model.PteroServerInfo;
+import de.tubyoub.velocitypteropower.service.LimboReason;
 import net.kyori.adventure.text.logger.slf4j.ComponentLogger;
 
 import java.util.concurrent.TimeUnit;
@@ -32,7 +35,7 @@ public class ServerSwitchListener {
   public void onDisconnect(DisconnectEvent event) {
     Player player = event.getPlayer();
     // Cleanup limbo record on disconnect
-    try { var lts = plugin.getLimboTrackerService(); if (lts != null) lts.clearForPlayer(player.getUniqueId(), "disconnect"); } catch (Exception ignored) {}
+    try { var lts = plugin.getLimboTrackerService(); if (lts != null) lts.clearForPlayer(player.getUniqueId(), "disconnect"); MaintenanceHook.consumePending(player.getUniqueId()); } catch (Exception ignored) {}
 
     // Record move history: current -> DISCONNECT
     try {
@@ -81,7 +84,18 @@ public class ServerSwitchListener {
         boolean joinedLimbo = cfg.getBalancerLimbos() != null && cfg.getBalancerLimbos().contains(newServerName);
         if (joinedLimbo) {
           if (lts.get(event.getPlayer().getUniqueId()).isEmpty()) {
-            lts.recordSelfMove(event.getPlayer(), newServer);
+            String pendingTarget = MaintenanceHook.consumePending(event.getPlayer().getUniqueId());
+            String previousName = event.getPreviousServer()
+                    .map(ps -> ps.getServerInfo().getName())
+                    .orElse(null);
+
+            if (pendingTarget != null) {
+              lts.record(event.getPlayer(),newServer, LimboReason.MAINTENANCE_WAIT, pendingTarget);
+            } else if (previousName != null && MaintenanceHook.isServerUnderMaintenance(previousName)) {
+              lts.record(event.getPlayer(), newServer, LimboReason.MAINTENANCE_WAIT, previousName);
+            } else {
+              lts.recordSelfMove(event.getPlayer(), newServer);
+            }
           }
         }
       }
@@ -117,4 +131,24 @@ public class ServerSwitchListener {
               }
             });
   }
+
+  @Subscribe
+  public void onServerPostConnect(ServerPostConnectEvent event) {
+    if (event.getPreviousServer() != null) return;
+
+    try {
+      var lts = plugin.getLimboTrackerService();
+      if (lts == null) return;
+
+      lts.get(event.getPlayer().getUniqueId()).ifPresent(record -> {
+        if (record.getReason() != LimboReason.MAINTENANCE_WAIT) return;
+
+        String target = record.getContext();
+        if (target == null || target.isBlank()) return;
+
+        event.getPlayer().sendMessage(messages.prefixed(MessageKey.CONNECT_MAINTENANCE_REDIRECT, "server", target, "limbo", record.getLimboServer()));
+      });
+    } catch (Exception ignored) {}
+  }
+
 }

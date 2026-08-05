@@ -43,6 +43,8 @@ connect:
   target-server-not-found: "<red>Zielserver '<server>' ist nicht verfügbar.</red>"
   not-whitelisted: "<red>Du bist auf diesem Server nicht auf der Whitelist.</red>"
   max-online-reached: "<red>Server kann nicht gestartet werden.</red> <gray>Maximale Anzahl gleichzeitig laufender Server erreicht (</gray><yellow><max></yellow><gray>).</gray>"
+  server-maintenance: "<red>Server '<server>' befindet sich in Wartung.</red>"
+  maintenance-redirect: "<gray>Server '<server>' befindet sich in Wartung. Du wirst zu</gray> <aqua><limbo></aqua> <gray>gesendet...</gray>"
 
 server:
   starting: "<gray>Server startet...</gray>"

@@ -10,10 +10,12 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import de.tubyoub.velocitypteropower.VelocityPteroPower;
 import de.tubyoub.velocitypteropower.api.PanelAPIClient;
 import de.tubyoub.velocitypteropower.api.PowerSignal;
+import de.tubyoub.velocitypteropower.hooks.MaintenanceHook;
 import de.tubyoub.velocitypteropower.manager.ConfigurationManager;
 import de.tubyoub.velocitypteropower.manager.MessageKey;
 import de.tubyoub.velocitypteropower.manager.MessagesManager;
 import de.tubyoub.velocitypteropower.model.PteroServerInfo;
+import de.tubyoub.velocitypteropower.service.LimboReason;
 import de.tubyoub.velocitypteropower.util.RateLimitTracker;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.logger.slf4j.ComponentLogger;
@@ -65,6 +67,13 @@ public class PlayerConnectionHandler {
     PteroServerInfo serverInfo = serverInfoMap.get(serverName);
     if (serverInfo == null) {
       handleUnmanagedServer(player, serverName);
+      return;
+    }
+
+    if (MaintenanceHook.isBlocked(player, serverName)) {
+      logger.debug("Not starting '{}' for {} — server is under maintenance.",
+              serverName, player.getUsername());
+      handleMaintenanceBlocked(event, player, serverName);
       return;
     }
 
@@ -358,6 +367,36 @@ public class PlayerConnectionHandler {
       logger.debug("Balancer limbo selection failed: {}", ex.toString());
     }
     return Optional.empty();
+  }
+
+  private void handleMaintenanceBlocked(ServerPreConnectEvent event, Player player, String serverName) {
+    MaintenanceHook.markPending(player.getUniqueId(), serverName);
+
+    Optional<RegisteredServer> limboOpt = findValidLimboServer();
+    if (limboOpt.isEmpty()) {
+      return;
+    }
+    MaintenanceHook.consumePending(player.getUniqueId());
+
+    RegisteredServer limbo = limboOpt.get();
+    boolean alreadyOnLimbo = event.getPreviousServer() != null && event.getPreviousServer().equals(limbo);
+
+    if (alreadyOnLimbo) {
+      player.sendMessage(messagesManager.prefixed(MessageKey.CONNECT_SERVER_MAINTENANCE, "server", serverName));
+      event.setResult(ServerPreConnectEvent.ServerResult.denied());
+    } else {
+      if (event.getPreviousServer() != null) {
+        player.sendMessage(messagesManager.prefixed(MessageKey.CONNECT_MAINTENANCE_REDIRECT, "server", serverName, "limbo", limbo.getServerInfo().getName()));
+      }
+      event.setResult(ServerPreConnectEvent.ServerResult.allowed(limbo));
+    }
+
+    try {
+      var lts = plugin.getLimboTrackerService();
+      if (lts != null) {
+        lts.record(player, limbo, LimboReason.MAINTENANCE_WAIT, serverName);
+      }
+    } catch (Exception ignored) {}
   }
 
   private void scheduleDelayedConnect(
