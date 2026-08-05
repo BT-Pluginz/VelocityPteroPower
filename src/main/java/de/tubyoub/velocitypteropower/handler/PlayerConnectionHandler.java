@@ -10,6 +10,7 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import de.tubyoub.velocitypteropower.VelocityPteroPower;
 import de.tubyoub.velocitypteropower.api.PanelAPIClient;
 import de.tubyoub.velocitypteropower.api.PowerSignal;
+import de.tubyoub.velocitypteropower.hooks.MaintenanceHook;
 import de.tubyoub.velocitypteropower.manager.ConfigurationManager;
 import de.tubyoub.velocitypteropower.manager.MessageKey;
 import de.tubyoub.velocitypteropower.manager.MessagesManager;
@@ -61,6 +62,12 @@ public class PlayerConnectionHandler {
     Player player = event.getPlayer();
     RegisteredServer targetServer = event.getOriginalServer();
     String serverName = targetServer.getServerInfo().getName();
+
+    if (MaintenanceHook.isBlocked(player, serverName)) {
+      logger.debug("Not starting '{}' for {} — server is under maintenance.",
+              serverName, player.getUsername());
+      return;
+    }
 
     PteroServerInfo serverInfo = serverInfoMap.get(serverName);
     if (serverInfo == null) {

@@ -5,11 +5,13 @@ import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
+import com.velocitypowered.api.plugin.Dependency;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
 import de.tubyoub.velocitypteropower.api.*;
 import de.tubyoub.velocitypteropower.command.PteroCommand;
+import de.tubyoub.velocitypteropower.hooks.MaintenanceHook;
 import de.tubyoub.velocitypteropower.handler.PlayerConnectionHandler;
 import de.tubyoub.velocitypteropower.lifecycle.ServerLifecycleManager;
 import de.tubyoub.velocitypteropower.listener.ServerSwitchListener;
@@ -40,7 +42,8 @@ import java.util.concurrent.ConcurrentHashMap;
         version = "0.9.5",
         authors = {"TubYoub"},
         description = "Manage Pterodactyl/Pelican/Mc Server Soft servers via Velocity.",
-        url = "https://github.com/Tubs-Pluginz/VelocityPteroPower")
+        url = "https://github.com/Tubs-Pluginz/VelocityPteroPower",
+        dependencies = {@Dependency(id = "maintenance", optional = true)})
 public class VelocityPteroPower {
     private static final String VERSION = "0.9.5";
     private static final String MODRINTH_PROJECT_ID = "1dDr5J4w";
@@ -123,6 +126,7 @@ public class VelocityPteroPower {
         }
 
         this.serverLifecycleManager = new ServerLifecycleManager(proxyServer, this);
+        MaintenanceHook.init(proxyServer, filteredLogger);
         this.playerConnectionHandler = new PlayerConnectionHandler(proxyServer, this);
         this.serverSwitchListener = new ServerSwitchListener(this, serverLifecycleManager);
         // Initialize and start lobby/limbo balancer
